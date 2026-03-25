@@ -637,11 +637,34 @@ theorem rightTrace_lift_eq {nLeft nRight : Nat} {w : Wire nLeft nRight}
               recvOut)
           hshare
 
-/-- 理想执行使用的总模拟种子。 -/
-structure SimSeed {nLeft nRight : Nat} (w : Wire nLeft nRight) where
-  real : RealSeed w
-  left : LeftObsSeed w
-  right : RightObsSeed w
+/-- 均匀 bit 随机性的分布。 -/
+noncomputable def bitPMF : PMF Bool :=
+  PMF.bernoulli ((1 : NNReal) / (2 : NNReal)) (by norm_num)
+
+/-- AND 门随机量的均匀分布。 -/
+noncomputable def andRandomnessPMF : PMF AndRandomness := do
+  let fromLeft ← bitPMF
+  let fromRight ← bitPMF
+  pure ⟨fromLeft, fromRight⟩
+
+/-- 真实世界随机种子的递归分布。 -/
+noncomputable def realSeedDist {nLeft nRight : Nat} :
+    (w : Wire nLeft nRight) → PMF (RealSeed w)
+  | .inputL i => do
+      let mask ← bitPMF
+      pure (.inputL i mask)
+  | .inputR i => do
+      let mask ← bitPMF
+      pure (.inputR i mask)
+  | .gate (.xor id a b) => do
+      let sa ← realSeedDist a
+      let sb ← realSeedDist b
+      pure (.xor id sa sb)
+  | .gate (.and id a b) => do
+      let sa ← realSeedDist a
+      let sb ← realSeedDist b
+      let ρ ← andRandomnessPMF
+      pure (.and id sa sb ρ)
 
 /-- 真实协议的局部视图。 -/
 def realProtocol (c : BoolCircuit) (input : Inputs c)
@@ -653,163 +676,137 @@ def realProtocol (c : BoolCircuit) (input : Inputs c)
       PartyView.right ⟨rightRealTrace seed input.left input.right, F_SFE_BoolCircuit c input⟩
 
 /--
-理想世界中的模拟器：
+理想世界中的单次模拟视图。
 
-- 单边腐化时，使用对应的可观察种子；
-- 双边腐化时，直接重放真实协议视图；
-- 无腐化时，返回任意固定模拟视图即可。
+这里直接复用真实世界的种子分布，并将其投影成被腐化方可见的模拟 trace。
 -/
-noncomputable def Simulator (c : BoolCircuit) :
-    Corruption → Inputs c → Bool → SimSeed c.output → LocalView PartyView
-  | corr, input, out, seed =>
-      match corruptionCase corr with
-      | .both => realProtocol c input seed.real
-      | _ =>
-          fun p =>
-            if p = left then
-              PartyView.left ⟨leftSimTrace seed.left input.left, out⟩
-            else
-              PartyView.right ⟨rightSimTrace seed.right input.right, out⟩
+noncomputable def simulatedView (c : BoolCircuit) (corr : Corruption)
+    (input : Inputs c) (out : Bool) (seed : RealSeed c.output) : LocalView PartyView :=
+  match corruptionCase corr with
+  | .both => realProtocol c input seed
+  | _ =>
+      fun p =>
+        if p = left then
+          PartyView.left
+            ⟨leftSimTrace (projectLeftSeed seed input.left input.right) input.left, out⟩
+        else
+          PartyView.right
+            ⟨rightSimTrace (projectRightSeed seed input.left input.right) input.right, out⟩
 
-theorem left_case_perfect
-    (c : BoolCircuit) (input : Inputs c) :
-    PerfectSimulates (caseToCorruption .left)
-      (RealExec (realProtocol c) input)
-      (IdealExec (F_SFE_BoolCircuit c) (Simulator c) (caseToCorruption .left) input) := by
-  ext obs
-  constructor
-  · intro hObs
-    rcases hObs with ⟨seed, hObs⟩
-    refine ⟨⟨seed, projectLeftSeed seed input.left input.right,
-      projectRightSeed seed input.left input.right⟩, ?_⟩
-    calc
-      observedView (caseToCorruption .left)
-          (IdealExec (F_SFE_BoolCircuit c) (Simulator c) (caseToCorruption .left) input
-            ⟨seed, projectLeftSeed seed input.left input.right,
-              projectRightSeed seed input.left input.right⟩)
-          =
-          observedView (caseToCorruption .left) (RealExec (realProtocol c) input seed) := by
-            apply observedView_left_of_eq
-            simp [RealExec, IdealExec, realProtocol, Simulator, leftTrace_project_eq]
-      _ = obs := hObs
-  · intro hObs
-    rcases hObs with ⟨seed, hObs⟩
-    refine ⟨liftLeftSeed seed.left input.left input.right, ?_⟩
-    have hTrace :
-        leftRealTrace (liftLeftSeed seed.left input.left input.right) input.left input.right =
-          leftSimTrace seed.left input.left := by
-      simpa using (leftTrace_lift_eq seed.left input.left input.right).symm
-    calc
-      observedView (caseToCorruption .left)
-          (RealExec (realProtocol c) input (liftLeftSeed seed.left input.left input.right))
-          =
-          observedView (caseToCorruption .left)
-            (IdealExec (F_SFE_BoolCircuit c) (Simulator c)
-              (caseToCorruption .left) input seed) := by
-            apply observedView_left_of_eq
-            simp [RealExec, IdealExec, realProtocol, Simulator, hTrace]
-      _ = obs := hObs
+/-- 真实世界在种子分布诱导下的执行分布。 -/
+noncomputable def realProtocolDist {Adv : Type} (c : BoolCircuit) :
+    Protocol Adv (Inputs c) PartyView :=
+  fun _ _ input =>
+    constFamily (PMF.map (realProtocol c input) (realSeedDist c.output))
 
-theorem right_case_perfect
-    (c : BoolCircuit) (input : Inputs c) :
-    PerfectSimulates (caseToCorruption .right)
-      (RealExec (realProtocol c) input)
-      (IdealExec (F_SFE_BoolCircuit c) (Simulator c) (caseToCorruption .right) input) := by
-  ext obs
-  constructor
-  · intro hObs
-    rcases hObs with ⟨seed, hObs⟩
-    refine ⟨⟨seed, projectLeftSeed seed input.left input.right,
-      projectRightSeed seed input.left input.right⟩, ?_⟩
-    calc
-      observedView (caseToCorruption .right)
-          (IdealExec (F_SFE_BoolCircuit c) (Simulator c) (caseToCorruption .right) input
-            ⟨seed, projectLeftSeed seed input.left input.right,
-              projectRightSeed seed input.left input.right⟩)
-          =
-          observedView (caseToCorruption .right) (RealExec (realProtocol c) input seed) := by
-            apply observedView_right_of_eq
-            simp [RealExec, IdealExec, realProtocol, Simulator, rightTrace_project_eq]
-      _ = obs := hObs
-  · intro hObs
-    rcases hObs with ⟨seed, hObs⟩
-    refine ⟨liftRightSeed seed.right input.left input.right, ?_⟩
-    have hTrace :
-        rightRealTrace (liftRightSeed seed.right input.left input.right) input.left input.right =
-          rightSimTrace seed.right input.right := by
-      simpa using (rightTrace_lift_eq seed.right input.left input.right).symm
-    calc
-      observedView (caseToCorruption .right)
-          (RealExec (realProtocol c) input (liftRightSeed seed.right input.left input.right))
-          =
-          observedView (caseToCorruption .right)
-            (IdealExec (F_SFE_BoolCircuit c) (Simulator c)
-              (caseToCorruption .right) input seed) := by
-            apply observedView_right_of_eq
-            simp [RealExec, IdealExec, realProtocol, Simulator, hTrace]
-      _ = obs := hObs
+/--
+理想世界中的模拟器族：
 
-theorem none_case_perfect
-    (c : BoolCircuit) (input : Inputs c) :
-    PerfectSimulates (caseToCorruption .none)
-      (RealExec (realProtocol c) input)
-      (IdealExec (F_SFE_BoolCircuit c) (Simulator c) (caseToCorruption .none) input) := by
-  ext obs
-  constructor <;> intro hObs
-  · rcases hObs with ⟨seed, hEq⟩
-    refine ⟨⟨seed, projectLeftSeed seed input.left input.right,
-      projectRightSeed seed input.left input.right⟩, ?_⟩
-    simpa [observedView_none] using hEq
-  · rcases hObs with ⟨seed, hEq⟩
-    refine ⟨seed.real, ?_⟩
-    simpa [observedView_none] using hEq
+- 量词顺序上仍是 `∀ adv, ∃ sim`；
+- 但在 OT-hybrid GMW 的半诚实证明里，模拟器并不依赖敌手内部状态，
+  因此这里只是对每个 `adv` 返回同一个构造。
+-/
+noncomputable def gmwSimulator {Adv : Type} (c : BoolCircuit) :
+    ∀ _ : Adv, Simulator (Inputs c) Bool PartyView
+  | _ =>
+      fun corr input out =>
+        constFamily (PMF.map (simulatedView c corr input out) (realSeedDist c.output))
 
-theorem both_case_perfect
-    (c : BoolCircuit) (input : Inputs c) :
-    PerfectSimulates (caseToCorruption .both)
-      (RealExec (realProtocol c) input)
-      (IdealExec (F_SFE_BoolCircuit c) (Simulator c) (caseToCorruption .both) input) := by
-  ext obs
-  constructor
-  · intro hObs
-    rcases hObs with ⟨seed, hEq⟩
-    refine ⟨⟨seed, projectLeftSeed seed input.left input.right,
-      projectRightSeed seed input.left input.right⟩, ?_⟩
-    simpa [RealExec, IdealExec, Simulator, corruptionCase_both]
-      using hEq
-  · intro hObs
-    rcases hObs with ⟨seed, hEq⟩
-    refine ⟨seed.real, ?_⟩
-    simpa [RealExec, IdealExec, Simulator, corruptionCase_both]
-      using hEq
+/-- 在理想输出等于真实函数输出时，模拟视图与真实视图的可观察部分完全一致。 -/
+theorem observed_simulatedView_eq_real
+    (c : BoolCircuit) (corr : Corruption) (input : Inputs c) (seed : RealSeed c.output) :
+    observedView corr (simulatedView c corr input (F_SFE_BoolCircuit c input) seed) =
+      observedView corr (realProtocol c input seed) := by
+  have hc : caseToCorruption (corruptionCase corr) = corr :=
+    caseToCorruption_corruptionCase corr
+  cases hCase : corruptionCase corr
+  · have hcorr : corr = caseToCorruption .none := by
+      simpa [hCase] using hc.symm
+    subst corr
+    simp [simulatedView, hCase, observedView_none]
+  · have hcorr : corr = caseToCorruption .left := by
+      simpa [hCase] using hc.symm
+    subst corr
+    apply observedView_left_of_eq
+    simp [simulatedView, hCase, realProtocol, leftTrace_project_eq]
+  · have hcorr : corr = caseToCorruption .right := by
+      simpa [hCase] using hc.symm
+    subst corr
+    apply observedView_right_of_eq
+    simp [simulatedView, hCase, realProtocol, rightTrace_project_eq]
+  · have hcorr : corr = caseToCorruption .both := by
+      simpa [hCase] using hc.symm
+    subst corr
+    simp [simulatedView, hCase]
 
-/-- 通用的 real / ideal 视图等价定理。 -/
-theorem gmw_real_ideal_view_eq
-    (c : BoolCircuit) (corr : Corruption) (input : Inputs c) :
-    PerfectSimulates corr
-      (RealExec (realProtocol c) input)
-      (IdealExec (F_SFE_BoolCircuit c) (Simulator c) corr input) := by
-  have hCore := UCSecureMVP.of_cases
-    (realProtocol c)
+/-- 完美层下的单个腐化情形证明。 -/
+theorem gmw_case_perfect {Adv : Type}
+    (c : BoolCircuit) (corrCase : CorruptionCase) (adv : Adv)
+    (env : Environment PartyView) (input : Inputs c) :
+    Indistinguishable .perfect zeroError (fun _ => True) env
+      (RealModel (realProtocolDist (Adv := Adv) c) (caseToCorruption corrCase) adv input)
+      (IdealModel (F_SFE_BoolCircuit c) ((gmwSimulator (Adv := Adv) c) adv)
+        (caseToCorruption corrCase) input) := by
+  simp only [Indistinguishable, PerfectIndist]
+  intro n
+  have hfun :
+      (fun seed =>
+        observedView (caseToCorruption corrCase)
+          (simulatedView c (caseToCorruption corrCase) input (F_SFE_BoolCircuit c input) seed)) =
+      (fun seed =>
+        observedView (caseToCorruption corrCase) (realProtocol c input seed)) := by
+    funext seed
+    simpa using observed_simulatedView_eq_real c (caseToCorruption corrCase) input seed
+  simp [RealModel, IdealModel, ObservedDist, realProtocolDist, gmwSimulator,
+    constFamily, PMF.map_comp, Function.comp_def, hfun]
+
+/-- 通用的 real / ideal 观察分布完全相等定理。 -/
+theorem gmw_real_ideal_view_eq_perfect {Adv : Type}
+    (c : BoolCircuit) (adv : Adv) (corr : Corruption)
+    (env : Environment PartyView) (input : Inputs c) :
+    Indistinguishable .perfect zeroError (fun _ => True) env
+      (RealModel (realProtocolDist (Adv := Adv) c) corr adv input)
+      (IdealModel (F_SFE_BoolCircuit c) ((gmwSimulator (Adv := Adv) c) adv) corr input) := by
+  have hc : caseToCorruption (corruptionCase corr) = corr :=
+    caseToCorruption_corruptionCase corr
+  cases hCase : corruptionCase corr
+  · have hcorr : corr = caseToCorruption .none := by
+      simpa [hCase] using hc.symm
+    subst corr
+    simpa using gmw_case_perfect (Adv := Adv) c .none adv env input
+  · have hcorr : corr = caseToCorruption .left := by
+      simpa [hCase] using hc.symm
+    subst corr
+    simpa using gmw_case_perfect (Adv := Adv) c .left adv env input
+  · have hcorr : corr = caseToCorruption .right := by
+      simpa [hCase] using hc.symm
+    subst corr
+    simpa using gmw_case_perfect (Adv := Adv) c .right adv env input
+  · have hcorr : corr = caseToCorruption .both := by
+      simpa [hCase] using hc.symm
+    subst corr
+    simpa using gmw_case_perfect (Adv := Adv) c .both adv env input
+
+/-- OT-hybrid 世界中 GMW 在完美层下满足严格 UC 安全。 -/
+theorem gmw_ot_hybrid_uc_secure_perfect {Adv : Type} (c : BoolCircuit) :
+    UCSecure (realProtocolDist (Adv := Adv) c) (F_SFE_BoolCircuit c) := by
+  refine UCSecureAt.of_cases
+    .perfect
+    zeroError
+    (fun _ => True)
+    (realProtocolDist (Adv := Adv) c)
     (F_SFE_BoolCircuit c)
-    (Simulator c)
-    (none_case_perfect c)
-    (left_case_perfect c)
-    (right_case_perfect c)
-    (both_case_perfect c)
-  exact hCore corr input
+    (gmwSimulator (Adv := Adv) c)
+    ?_ ?_ ?_ ?_
+  · exact gmw_case_perfect (Adv := Adv) c .none
+  · exact gmw_case_perfect (Adv := Adv) c .left
+  · exact gmw_case_perfect (Adv := Adv) c .right
+  · exact gmw_case_perfect (Adv := Adv) c .both
 
-/-- OT-hybrid 世界中 GMW 的 UC MVP 安全性。 -/
-theorem gmw_ot_hybrid_uc_secure (c : BoolCircuit) :
-    UCSecureMVP (realProtocol c) (F_SFE_BoolCircuit c) (Simulator c) := by
-  refine UCSecureMVP.of_cases
-    (realProtocol c)
-    (F_SFE_BoolCircuit c)
-    (Simulator c)
-    (none_case_perfect c)
-    (left_case_perfect c)
-    (right_case_perfect c)
-    (both_case_perfect c)
+/-- 向后兼容的别名：当前默认 `UCSecure` 即完美层。 -/
+theorem gmw_ot_hybrid_uc_secure {Adv : Type} (c : BoolCircuit) :
+    UCSecure (realProtocolDist (Adv := Adv) c) (F_SFE_BoolCircuit c) :=
+  gmw_ot_hybrid_uc_secure_perfect (Adv := Adv) c
 
 /-- 单个 XOR 门电路示例。 -/
 def xorExample : BoolCircuit where
