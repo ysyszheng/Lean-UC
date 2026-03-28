@@ -49,6 +49,7 @@
 文件：
 
 - `LeanCryptoProtocols/UC/Functionality/OT.lean`
+- `LeanCryptoProtocols/UC/Functionality/SFE.lean`
 
 当前提供 bit 级的 1-out-of-2 OT 理想功能 `F_OT`，并显式建模：
 
@@ -58,6 +59,13 @@
 - sender / receiver 局部事件接口
 
 这部分被 GMW 的 AND 门子协议直接调用。
+
+另外还提供公开布尔电路上的安全函数计算理想功能：
+
+- `F_BoolCircuitSFE`
+- `IdealBoolCircuitSFE`
+
+GMW 的目标 ideal functionality 现在直接来自 `LeanCryptoProtocols/UC/Functionality/SFE.lean`。
 
 ### 3. DAG 布尔电路组件
 
@@ -84,6 +92,9 @@
 
 文件：
 
+- `LeanCryptoProtocols/GMW/OTHybrid/Model.lean`
+- `LeanCryptoProtocols/GMW/OTHybrid/Security.lean`
+- `LeanCryptoProtocols/GMW/OTHybrid/Certificate.lean`
 - `LeanCryptoProtocols/GMW/OTHybrid.lean`
 
 当前已证明：
@@ -110,6 +121,22 @@
 
 不会读取诚实方输入，也不会重放真实执行 witness。
 
+### 5. Certificate 层
+
+当前项目开始为协议提供单独的审计入口文件 `Certificate.lean`。
+
+对 GMW / OT-hybrid 而言，三层结构是：
+
+- `Model.lean`：协议建模入口，包含 world 中需要公开的协议对象与目标 ideal functionality
+- `Security.lean`：详细 simulator 构造与完整证明脚本
+- `Certificate.lean`：审核者最小核查面，完整陈述 world / protocol / idealF / UC theorem
+
+审计建议路径：
+
+1. 先读 `LeanCryptoProtocols/GMW/OTHybrid/Certificate.lean`
+2. 如需核对协议建模，再读 `LeanCryptoProtocols/GMW/OTHybrid/Model.lean`
+3. 只有在需要检查详细证明实现时，再读 `LeanCryptoProtocols/GMW/OTHybrid/Security.lean`
+
 ## 如何构建
 
 在项目根目录执行：
@@ -123,6 +150,12 @@ lake build
 
 ```bash
 lake build LeanCryptoProtocols.GMW.OTHybrid
+```
+
+如果只想单独检查审计入口：
+
+```bash
+lake build LeanCryptoProtocols.GMW.OTHybrid.Certificate
 ```
 
 ## 当前限制

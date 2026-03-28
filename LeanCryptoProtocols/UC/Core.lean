@@ -101,9 +101,14 @@ structure Environment (View : Type u) where
 
 /-- 理想世界允许 simulator 访问的信息接口。 -/
 structure IdealInterface (Input : Type u) (Output : Type v) where
+  /- 给定腐化情形后，simulator 可见的腐化方输入类型 -/
+  /- 返回的Type u中的值是腐化方输入类型 -/
   CorruptedInput : CorruptionCase → Type u
   CorruptedOutput : CorruptionCase → Type v
+  /- 理想功能额外允许 simulator 访问的泄漏类型 -/
   Leakage : CorruptionCase → Type (max u v)
+  /- 从完整输入中裁剪出 simulator 可见的腐化方输入。 -/
+  /- CorruptedInput corr是Type u中的值，即腐化方的输入类型；返回的CorruptedInput corr中的值是腐化方输入类型中的值，即具体的腐化方输入 -/
   corruptInput : (corr : CorruptionCase) → Input → CorruptedInput corr
   corruptOutput : (corr : CorruptionCase) → Output → CorruptedOutput corr
   leakage : (corr : CorruptionCase) → Input → Output → Leakage corr

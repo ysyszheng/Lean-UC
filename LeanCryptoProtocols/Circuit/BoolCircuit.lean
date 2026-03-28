@@ -43,6 +43,7 @@ inductive Node (nLeft nRight nGates : Nat) where
 -/
 inductive Program (nLeft nRight : Nat) : Nat → Type where
   | nil : Program nLeft nRight 0
+  -- 用含有前n个gates的电路加一个gate，构造含有n+1个gates的电路
   | snoc : Program nLeft nRight n → Node nLeft nRight n → Program nLeft nRight (n + 1)
   deriving Repr
 
@@ -87,7 +88,9 @@ def extendGateVals {n : Nat}
       else
         next
 
-/-- 递归计算整个门序列的所有门输出。 -/
+/-- 递归计算整个门序列的所有门输出。
+TODO: DP?
+-/
 def Program.eval {nLeft nRight nGates : Nat}
     (program : Program nLeft nRight nGates)
     (leftIn : Fin nLeft → Bool) (rightIn : Fin nRight → Bool) :
