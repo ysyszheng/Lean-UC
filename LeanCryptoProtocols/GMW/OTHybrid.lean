@@ -1,849 +1,692 @@
 import LeanCryptoProtocols.UC.Core
 import LeanCryptoProtocols.UC.Functionality.OT
+import LeanCryptoProtocols.Circuit.BoolCircuit
 
 /-!
 # OT-hybrid 世界中的 GMW
 
-本文件实现一个面向第一阶段的 GMW 形式化：
+本文件在以下边界内形式化 GMW 协议的严格 UC 安全性：
 
 - 两方；
-- 半诚实、静态腐化；
-- 布尔电路；
+- 静态腐化；
+- 半诚实敌手；
+- 同步固定轮次；
+- 布尔 DAG 电路；
 - `F_OT`-hybrid 世界；
-- 用被腐化方可观察视图的 support 相等来表达完美安全。
+- 在完美层证明 `∀ adv, ∃ sim, ∀ env`。
 
-为了让证明保持可控，当前电路 IR 采用树形布尔电路。
-这已经足以承载 XOR 免费、AND 走 `F_OT` 的 GMW 证明骨架。
+与先前错误版本不同，这里的 simulator：
+
+- 只接收被腐化方输入与理想输出；
+- 不接收诚实方输入；
+- 不接收真实执行随机性；
+- 对 AND 门的隐藏部分直接按标准证明方式独立采样。
+
+为了保持定义简洁，`Protocol` 在每个固定腐化情形下直接返回该情形下的局部可观察执行分布。
+这与当前 `UC/Core` 中按 `corr` 参数化的执行接口是一致的。
 -/
 
 namespace LeanCryptoProtocols.GMW.OTHybrid
 
 open LeanCryptoProtocols.UC
 open LeanCryptoProtocols.UC.Functionality
+open LeanCryptoProtocols.Circuit
 
 /-- `Bool.xor` 的简写。 -/
 abbrev bxor : Bool → Bool → Bool := Bool.xor
 
-mutual
-
-/-- 电路中的 wire。 -/
-inductive Wire : Nat → Nat → Type
-  | inputL {nLeft nRight : Nat} : Fin nLeft → Wire nLeft nRight
-  | inputR {nLeft nRight : Nat} : Fin nRight → Wire nLeft nRight
-  | gate {nLeft nRight : Nat} : Gate nLeft nRight → Wire nLeft nRight
-  deriving DecidableEq, Repr
-
-/-- 第一版只保留 XOR 与 AND 两类内部 gate。 -/
-inductive Gate : Nat → Nat → Type
-  | xor {nLeft nRight : Nat} : Nat → Wire nLeft nRight → Wire nLeft nRight → Gate nLeft nRight
-  | and {nLeft nRight : Nat} : Nat → Wire nLeft nRight → Wire nLeft nRight → Gate nLeft nRight
-  deriving DecidableEq, Repr
-
-end
-
-/-- 单输出布尔电路。 -/
-structure BoolCircuit where
-  nLeft : Nat
-  nRight : Nat
-  output : Wire nLeft nRight
-
-/-- GMW 的输入。 -/
-structure Inputs (c : BoolCircuit) where
-  left : Fin c.nLeft → Bool
-  right : Fin c.nRight → Bool
-
-mutual
-
-/-- 递归求值 wire。 -/
-def evalWire {nLeft nRight : Nat} :
-    Wire nLeft nRight → (Fin nLeft → Bool) → (Fin nRight → Bool) → Bool
-  | .inputL i, x, _ => x i
-  | .inputR j, _, y => y j
-  | .gate g, x, y => evalGate g x y
-
-/-- 递归求值 gate。 -/
-def evalGate {nLeft nRight : Nat} :
-    Gate nLeft nRight → (Fin nLeft → Bool) → (Fin nRight → Bool) → Bool
-  | .xor _ a b, x, y => bxor (evalWire a x y) (evalWire b x y)
-  | .and _ a b, x, y => evalWire a x y && evalWire b x y
-
-end
-
-/-- 电路理想功能的输出。 -/
-def F_SFE_BoolCircuit (c : BoolCircuit) (input : Inputs c) : Bool :=
-  evalWire c.output input.left input.right
-
-/-- 两方 bit 共享。 -/
+/-- GMW 中的两方异或共享。 -/
 abbrev Share : Type := Bool × Bool
 
 /-- 还原共享值。 -/
 def revealShare (s : Share) : Bool :=
   bxor s.1 s.2
 
-/-- 左方输入的 GMW 分享。 -/
-def shareLeftInput (x mask : Bool) : Share :=
-  (mask, bxor x mask)
+/--
+左方输入的分享方式：
 
-/-- 右方输入的 GMW 分享。 -/
-def shareRightInput (x mask : Bool) : Share :=
-  (mask, bxor x mask)
+- 左方保留 `x xor r`
+- 右方收到 `r`
+-/
+def shareLeftInput (x r : Bool) : Share :=
+  (bxor x r, r)
+
+/--
+右方输入的分享方式：
+
+- 左方收到 `s`
+- 右方保留 `y xor s`
+-/
+def shareRightInput (y s : Bool) : Share :=
+  (s, bxor y s)
 
 /-- XOR 门逐份额按位异或。 -/
 def xorShare (a b : Share) : Share :=
   (bxor a.1 b.1, bxor a.2 b.2)
 
-/-- AND 门中两次 OT 用到的随机量。 -/
-structure AndRandomness where
-  fromLeft : Bool
-  fromRight : Bool
-  deriving Repr, DecidableEq
+/-- NOT 门通过翻转左方份额实现。 -/
+def notShare (a : Share) : Share :=
+  (!a.1, a.2)
 
 /-- 左向右 OT 的接收输出。 -/
-def leftToRightOTOutput (aLeft bRight mask : Bool) : Bool :=
-  bxor mask (aLeft && bRight)
+def leftToRightOTOutput (aLeft bRight sendMask : Bool) : Bool :=
+  bxor sendMask (aLeft && bRight)
 
 /-- 右向左 OT 的接收输出。 -/
-def rightToLeftOTOutput (aRight bLeft mask : Bool) : Bool :=
-  bxor mask (aRight && bLeft)
+def rightToLeftOTOutput (aRight bLeft sendMask : Bool) : Bool :=
+  bxor sendMask (aRight && bLeft)
 
-/--
-OT-hybrid AND 子协议产生的输出共享。
-
-这是标准两次 OT 写法：
-- 左方发送 `(r, r xor a0)`；
-- 右方发送 `(s, s xor a1)`；
-- 各自用收到的 OT 输出完成交叉项。
--/
-def andShareOT (a b : Share) (ρ : AndRandomness) : Share :=
-  let t := leftToRightOTOutput a.1 b.2 ρ.fromLeft
-  let u := rightToLeftOTOutput a.2 b.1 ρ.fromRight
-  (bxor (a.1 && b.1) (bxor u ρ.fromLeft),
-    bxor (a.2 && b.2) (bxor t ρ.fromRight))
+/-- GMW 的两次 OT AND 子协议。 -/
+def andShareOT (a b : Share) (sendL sendR : Bool) : Share :=
+  let t := leftToRightOTOutput a.1 b.2 sendL
+  let u := rightToLeftOTOutput a.2 b.1 sendR
+  ((a.1 && b.1) |> bxor u |> bxor sendL,
+    (a.2 && b.2) |> bxor t |> bxor sendR)
 
 /-- XOR 门共享正确性。 -/
 theorem gmw_xor_gate_correct (a b : Share) :
     revealShare (xorShare a b) = bxor (revealShare a) (revealShare b) := by
-  rcases a with ⟨a0, a1⟩
-  rcases b with ⟨b0, b1⟩
-  cases a0 <;> cases a1 <;> cases b0 <;> cases b1 <;> rfl
+  rcases a with ⟨a₀, a₁⟩
+  rcases b with ⟨b₀, b₁⟩
+  cases a₀ <;> cases a₁ <;> cases b₀ <;> cases b₁ <;> rfl
+
+/-- NOT 门共享正确性。 -/
+theorem gmw_not_gate_correct (a : Share) :
+    revealShare (notShare a) = !(revealShare a) := by
+  rcases a with ⟨a₀, a₁⟩
+  cases a₀ <;> cases a₁ <;> rfl
 
 /-- AND 门 OT-hybrid 子协议正确性。 -/
-theorem gmw_and_gate_ot_hybrid_correct (a b : Share) (ρ : AndRandomness) :
-    revealShare (andShareOT a b ρ) = (revealShare a && revealShare b) := by
-  rcases a with ⟨a0, a1⟩
-  rcases b with ⟨b0, b1⟩
-  rcases ρ with ⟨r, s⟩
-  cases a0 <;> cases a1 <;> cases b0 <;> cases b1 <;> cases r <;> cases s <;> rfl
+theorem gmw_and_gate_ot_hybrid_correct (a b : Share) (sendL sendR : Bool) :
+    revealShare (andShareOT a b sendL sendR) = (revealShare a && revealShare b) := by
+  rcases a with ⟨a₀, a₁⟩
+  rcases b with ⟨b₀, b₁⟩
+  cases a₀ <;> cases a₁ <;> cases b₀ <;> cases b₁ <;> cases sendL <;> cases sendR <;> rfl
 
-@[simp] theorem rightToLeftOTOutput_cancel (aRight bLeft recvOut : Bool) :
-    rightToLeftOTOutput aRight bLeft (bxor recvOut (aRight && bLeft)) = recvOut := by
-  cases aRight <;> cases bLeft <;> cases recvOut <;> rfl
+/-- 电路的理想功能。 -/
+def F_SFE_BoolCircuit (c : BoolCircuit) : Inputs c → Bool :=
+  c.eval
 
-@[simp] theorem leftToRightOTOutput_cancel (aLeft bRight recvOut : Bool) :
-    leftToRightOTOutput aLeft bRight (bxor recvOut (aLeft && bRight)) = recvOut := by
-  cases aLeft <;> cases bRight <;> cases recvOut <;> rfl
+/-- GMW 的电路理想功能接口。 -/
+def IdealSFE (c : BoolCircuit) : IdealFunctionality (Inputs c) Bool where
+  eval := F_SFE_BoolCircuit c
+  interface :=
+    { CorruptedInput := fun
+        | .none => PUnit
+        | .left => Fin c.nLeft → Bool
+        | .right => Fin c.nRight → Bool
+        | .both => Inputs c
+      CorruptedOutput := fun
+        | .none => PUnit
+        | .left => Bool
+        | .right => Bool
+        | .both => Bool
+      Leakage := fun _ => PUnit
+      corruptInput := fun
+        | .none, _ => PUnit.unit
+        | .left, input => input.left
+        | .right, input => input.right
+        | .both, input => input
+      corruptOutput := fun
+        | .none, _ => PUnit.unit
+        | .left, out => out
+        | .right, out => out
+        | .both, out => out
+      leakage := fun _ _ _ => PUnit.unit }
 
-/-- 真实执行使用的随机种子。 -/
-inductive RealSeed : {nLeft nRight : Nat} → Wire nLeft nRight → Type
-  | inputL {nLeft nRight : Nat} (i : Fin nLeft) (mask : Bool) :
-      RealSeed (Wire.inputL (nLeft := nLeft) (nRight := nRight) i)
-  | inputR {nLeft nRight : Nat} (i : Fin nRight) (mask : Bool) :
-      RealSeed (Wire.inputR (nLeft := nLeft) (nRight := nRight) i)
-  | xor {nLeft nRight : Nat} (id : Nat) {a b : Wire nLeft nRight}
-      (sa : RealSeed a) (sb : RealSeed b) :
-      RealSeed (Wire.gate (Gate.xor id a b))
-  | and {nLeft nRight : Nat} (id : Nat) {a b : Wire nLeft nRight}
-      (sa : RealSeed a) (sb : RealSeed b) (ρ : AndRandomness) :
-      RealSeed (Wire.gate (Gate.and id a b))
-
-/-- 左方模拟器使用的可观察种子。 -/
-inductive LeftObsSeed : {nLeft nRight : Nat} → Wire nLeft nRight → Type
-  | inputOwn {nLeft nRight : Nat} (i : Fin nLeft) (mask : Bool) :
-      LeftObsSeed (Wire.inputL (nLeft := nLeft) (nRight := nRight) i)
-  | inputOther {nLeft nRight : Nat} (i : Fin nRight) (share : Bool) :
-      LeftObsSeed (Wire.inputR (nLeft := nLeft) (nRight := nRight) i)
-  | xor {nLeft nRight : Nat} (id : Nat) {a b : Wire nLeft nRight}
-      (sa : LeftObsSeed a) (sb : LeftObsSeed b) :
-      LeftObsSeed (Wire.gate (Gate.xor id a b))
-  | and {nLeft nRight : Nat} (id : Nat) {a b : Wire nLeft nRight}
-      (sa : LeftObsSeed a) (sb : LeftObsSeed b)
-      (sendMask recvOut : Bool) :
-      LeftObsSeed (Wire.gate (Gate.and id a b))
-
-/-- 右方模拟器使用的可观察种子。 -/
-inductive RightObsSeed : {nLeft nRight : Nat} → Wire nLeft nRight → Type
-  | inputOther {nLeft nRight : Nat} (i : Fin nLeft) (share : Bool) :
-      RightObsSeed (Wire.inputL (nLeft := nLeft) (nRight := nRight) i)
-  | inputOwn {nLeft nRight : Nat} (i : Fin nRight) (mask : Bool) :
-      RightObsSeed (Wire.inputR (nLeft := nLeft) (nRight := nRight) i)
-  | xor {nLeft nRight : Nat} (id : Nat) {a b : Wire nLeft nRight}
-      (sa : RightObsSeed a) (sb : RightObsSeed b) :
-      RightObsSeed (Wire.gate (Gate.xor id a b))
-  | and {nLeft nRight : Nat} (id : Nat) {a b : Wire nLeft nRight}
-      (sa : RightObsSeed a) (sb : RightObsSeed b)
-      (sendMask recvOut : Bool) :
-      RightObsSeed (Wire.gate (Gate.and id a b))
-
-mutual
-
-/-- 由真实种子与双方输入计算两方共享。 -/
-def realShareOf {nLeft nRight : Nat} {w : Wire nLeft nRight}
-    (seed : RealSeed w) (x : Fin nLeft → Bool) (y : Fin nRight → Bool) : Share :=
-  match seed with
-  | .inputL i mask => shareLeftInput (x i) mask
-  | .inputR i mask => shareRightInput (y i) mask
-  | .xor _ sa sb => xorShare (realShareOf sa x y) (realShareOf sb x y)
-  | .and _ sa sb ρ => andShareOT (realShareOf sa x y) (realShareOf sb x y) ρ
-
-/-- 左方在可观察种子下持有的局部份额。 -/
-def leftShareOf {nLeft nRight : Nat} {w : Wire nLeft nRight}
-    (seed : LeftObsSeed w) (x : Fin nLeft → Bool) : Bool :=
-  match seed with
-  | .inputOwn i mask => (shareLeftInput (x i) mask).1
-  | .inputOther _ share => share
-  | .xor _ sa sb => bxor (leftShareOf sa x) (leftShareOf sb x)
-  | .and _ sa sb sendMask recvOut =>
-      bxor ((leftShareOf sa x) && (leftShareOf sb x)) (bxor recvOut sendMask)
-
-/-- 右方在可观察种子下持有的局部份额。 -/
-def rightShareOf {nLeft nRight : Nat} {w : Wire nLeft nRight}
-    (seed : RightObsSeed w) (y : Fin nRight → Bool) : Bool :=
-  match seed with
-  | .inputOther _ share => share
-  | .inputOwn i mask => (shareRightInput (y i) mask).2
-  | .xor _ sa sb => bxor (rightShareOf sa y) (rightShareOf sb y)
-  | .and _ sa sb sendMask recvOut =>
-      bxor ((rightShareOf sa y) && (rightShareOf sb y)) (bxor recvOut sendMask)
-
-end
-
-/-- 左方的逐门可观察 trace。 -/
-inductive LeftTrace where
-  | inputOwn : Nat → Bool → Bool → LeftTrace
-  | inputOther : Nat → Bool → LeftTrace
-  | xor : Nat → LeftTrace → LeftTrace → Bool → LeftTrace
-  | and : Nat → LeftTrace → LeftTrace →
-      Bool → Bool → Bool → Bool → Bool → LeftTrace
+/-- 左方局部事件。 -/
+inductive LeftEvent where
+  | ownInput (idx : Nat) (input keepShare sentShare : Bool)
+  | otherInput (idx : Nat) (recvShare : Bool)
+  | xor (gateId : Nat) (lhs rhs outShare : Bool)
+  | not (gateId : Nat) (inputShare outShare : Bool)
+  | and (gateId : Nat) (lhs rhs : Bool)
+      (send : OTSenderView) (recv : OTReceiverView) (outShare : Bool)
+  | outputReveal (ownShare recvShare output : Bool)
   deriving Repr, DecidableEq
 
-/-- 右方的逐门可观察 trace。 -/
-inductive RightTrace where
-  | inputOther : Nat → Bool → RightTrace
-  | inputOwn : Nat → Bool → Bool → RightTrace
-  | xor : Nat → RightTrace → RightTrace → Bool → RightTrace
-  | and : Nat → RightTrace → RightTrace →
-      Bool → Bool → Bool → Bool → Bool → RightTrace
+/-- 右方局部事件。 -/
+inductive RightEvent where
+  | otherInput (idx : Nat) (recvShare : Bool)
+  | ownInput (idx : Nat) (input keepShare sentShare : Bool)
+  | xor (gateId : Nat) (lhs rhs outShare : Bool)
+  | not (gateId : Nat) (inputShare outShare : Bool)
+  | and (gateId : Nat) (lhs rhs : Bool)
+      (recv : OTReceiverView) (send : OTSenderView) (outShare : Bool)
+  | outputReveal (ownShare recvShare output : Bool)
   deriving Repr, DecidableEq
 
-mutual
-
-/-- 真实执行中左方的局部 trace。 -/
-def leftRealTrace {nLeft nRight : Nat} {w : Wire nLeft nRight}
-    (seed : RealSeed w) (x : Fin nLeft → Bool) (y : Fin nRight → Bool) : LeftTrace :=
-  match seed with
-  | .inputL i mask =>
-      LeftTrace.inputOwn i.1 (x i) (shareLeftInput (x i) mask).1
-  | .inputR i mask =>
-      LeftTrace.inputOther i.1 (shareRightInput (y i) mask).1
-  | .xor id sa sb =>
-      LeftTrace.xor id (leftRealTrace sa x y) (leftRealTrace sb x y) (realShareOf seed x y).1
-  | .and id sa sb ρ =>
-      let a := realShareOf sa x y
-      let b := realShareOf sb x y
-      LeftTrace.and id
-        (leftRealTrace sa x y)
-        (leftRealTrace sb x y)
-        (realShareOf seed x y).1
-        ρ.fromLeft
-        (bxor ρ.fromLeft a.1)
-        b.1
-        (rightToLeftOTOutput a.2 b.1 ρ.fromRight)
-
-/-- 真实执行中右方的局部 trace。 -/
-def rightRealTrace {nLeft nRight : Nat} {w : Wire nLeft nRight}
-    (seed : RealSeed w) (x : Fin nLeft → Bool) (y : Fin nRight → Bool) : RightTrace :=
-  match seed with
-  | .inputL i mask =>
-      RightTrace.inputOther i.1 (shareLeftInput (x i) mask).2
-  | .inputR i mask =>
-      RightTrace.inputOwn i.1 (y i) (shareRightInput (y i) mask).2
-  | .xor id sa sb =>
-      RightTrace.xor id (rightRealTrace sa x y) (rightRealTrace sb x y) (realShareOf seed x y).2
-  | .and id sa sb ρ =>
-      let a := realShareOf sa x y
-      let b := realShareOf sb x y
-      RightTrace.and id
-        (rightRealTrace sa x y)
-        (rightRealTrace sb x y)
-        (realShareOf seed x y).2
-        ρ.fromRight
-        (bxor ρ.fromRight a.2)
-        b.2
-        (leftToRightOTOutput a.1 b.2 ρ.fromLeft)
-
-/-- 理想世界中左方的模拟 trace。 -/
-def leftSimTrace {nLeft nRight : Nat} {w : Wire nLeft nRight}
-    (seed : LeftObsSeed w) (x : Fin nLeft → Bool) : LeftTrace :=
-  match seed with
-  | .inputOwn i mask =>
-      LeftTrace.inputOwn i.1 (x i) (shareLeftInput (x i) mask).1
-  | .inputOther i share =>
-      LeftTrace.inputOther i.1 share
-  | .xor id sa sb =>
-      LeftTrace.xor id (leftSimTrace sa x) (leftSimTrace sb x) (leftShareOf seed x)
-  | .and id sa sb sendMask recvOut =>
-      LeftTrace.and id
-        (leftSimTrace sa x)
-        (leftSimTrace sb x)
-        (leftShareOf seed x)
-        sendMask
-        (bxor sendMask (leftShareOf sa x))
-        (leftShareOf sb x)
-        recvOut
-
-/-- 理想世界中右方的模拟 trace。 -/
-def rightSimTrace {nLeft nRight : Nat} {w : Wire nLeft nRight}
-    (seed : RightObsSeed w) (y : Fin nRight → Bool) : RightTrace :=
-  match seed with
-  | .inputOther i share =>
-      RightTrace.inputOther i.1 share
-  | .inputOwn i mask =>
-      RightTrace.inputOwn i.1 (y i) (shareRightInput (y i) mask).2
-  | .xor id sa sb =>
-      RightTrace.xor id (rightSimTrace sa y) (rightSimTrace sb y) (rightShareOf seed y)
-  | .and id sa sb sendMask recvOut =>
-      RightTrace.and id
-        (rightSimTrace sa y)
-        (rightSimTrace sb y)
-        (rightShareOf seed y)
-        sendMask
-        (bxor sendMask (rightShareOf sa y))
-        (rightShareOf sb y)
-        recvOut
-
-end
-
-/-- 左方最终视图：逐门 trace 加上最终输出。 -/
+/-- 左方最终视图。 -/
 structure LeftFinalView where
-  trace : LeftTrace
+  trace : List LeftEvent
+  outputShare : Bool
+  receivedOutputShare : Bool
   output : Bool
   deriving Repr, DecidableEq
 
-/-- 右方最终视图：逐门 trace 加上最终输出。 -/
+/-- 右方最终视图。 -/
 structure RightFinalView where
-  trace : RightTrace
+  trace : List RightEvent
+  outputShare : Bool
+  receivedOutputShare : Bool
   output : Bool
   deriving Repr, DecidableEq
 
-/-- 两方本地视图统一到一个总类型中。 -/
+/-- 两方视图合并到统一类型中。 -/
 inductive PartyView where
   | left : LeftFinalView → PartyView
   | right : RightFinalView → PartyView
   deriving Repr, DecidableEq
 
-mutual
+/-- 左方视图种子。 -/
+structure LeftSeed (c : BoolCircuit) where
+  ownMasks : Fin c.nLeft → Bool
+  recvInputShares : Fin c.nRight → Bool
+  sendMasks : Fin c.nGates → Bool
+  recvOT : Fin c.nGates → Bool
+  deriving Repr, DecidableEq, Fintype
 
-/-- 从真实种子中抽取左方可观察种子。 -/
-def projectLeftSeed {nLeft nRight : Nat} {w : Wire nLeft nRight}
-    (seed : RealSeed w) (x : Fin nLeft → Bool) (y : Fin nRight → Bool) : LeftObsSeed w :=
-  match seed with
-  | .inputL i mask => .inputOwn i mask
-  | .inputR i mask => .inputOther i (shareRightInput (y i) mask).1
-  | .xor id sa sb => .xor id (projectLeftSeed sa x y) (projectLeftSeed sb x y)
-  | .and id sa sb ρ =>
-      let a := realShareOf sa x y
-      let b := realShareOf sb x y
-      .and id (projectLeftSeed sa x y) (projectLeftSeed sb x y)
-        ρ.fromLeft
-        (rightToLeftOTOutput a.2 b.1 ρ.fromRight)
+instance (c : BoolCircuit) : Inhabited (LeftSeed c) where
+  default :=
+    { ownMasks := fun _ => false
+      recvInputShares := fun _ => false
+      sendMasks := fun _ => false
+      recvOT := fun _ => false }
 
-/-- 从真实种子中抽取右方可观察种子。 -/
-def projectRightSeed {nLeft nRight : Nat} {w : Wire nLeft nRight}
-    (seed : RealSeed w) (x : Fin nLeft → Bool) (y : Fin nRight → Bool) : RightObsSeed w :=
-  match seed with
-  | .inputL i mask => .inputOther i (shareLeftInput (x i) mask).2
-  | .inputR i mask => .inputOwn i mask
-  | .xor id sa sb => .xor id (projectRightSeed sa x y) (projectRightSeed sb x y)
-  | .and id sa sb ρ =>
-      let a := realShareOf sa x y
-      let b := realShareOf sb x y
-      .and id (projectRightSeed sa x y) (projectRightSeed sb x y)
-        ρ.fromRight
-        (leftToRightOTOutput a.1 b.2 ρ.fromLeft)
+/-- 右方视图种子。 -/
+structure RightSeed (c : BoolCircuit) where
+  recvInputShares : Fin c.nLeft → Bool
+  ownMasks : Fin c.nRight → Bool
+  recvOT : Fin c.nGates → Bool
+  sendMasks : Fin c.nGates → Bool
+  deriving Repr, DecidableEq, Fintype
 
-/-- 用左方可观察种子回填出一个真实种子。 -/
-def liftLeftSeed {nLeft nRight : Nat} {w : Wire nLeft nRight}
-    (seed : LeftObsSeed w) (x : Fin nLeft → Bool) (y : Fin nRight → Bool) : RealSeed w :=
-  match seed with
-  | .inputOwn i mask => .inputL i mask
-  | .inputOther i share => .inputR i share
-  | .xor id sa sb => .xor id (liftLeftSeed sa x y) (liftLeftSeed sb x y)
-  | .and id sa sb sendMask recvOut =>
-      let ra := liftLeftSeed sa x y
-      let rb := liftLeftSeed sb x y
-      let a := realShareOf ra x y
-      let b := realShareOf rb x y
-      .and id ra rb ⟨sendMask, bxor recvOut (a.2 && b.1)⟩
+instance (c : BoolCircuit) : Inhabited (RightSeed c) where
+  default :=
+    { recvInputShares := fun _ => false
+      ownMasks := fun _ => false
+      recvOT := fun _ => false
+      sendMasks := fun _ => false }
 
-/-- 用右方可观察种子回填出一个真实种子。 -/
-def liftRightSeed {nLeft nRight : Nat} {w : Wire nLeft nRight}
-    (seed : RightObsSeed w) (x : Fin nLeft → Bool) (y : Fin nRight → Bool) : RealSeed w :=
-  match seed with
-  | .inputOther i share => .inputL i (bxor (x i) share)
-  | .inputOwn i mask => .inputR i mask
-  | .xor id sa sb => .xor id (liftRightSeed sa x y) (liftRightSeed sb x y)
-  | .and id sa sb sendMask recvOut =>
-      let ra := liftRightSeed sa x y
-      let rb := liftRightSeed sb x y
-      let a := realShareOf ra x y
-      let b := realShareOf rb x y
-      .and id ra rb ⟨bxor recvOut (a.1 && b.2), sendMask⟩
+/-- 双方都被腐化时的真实执行种子。 -/
+structure BothSeed (c : BoolCircuit) where
+  leftMasks : Fin c.nLeft → Bool
+  rightMasks : Fin c.nRight → Bool
+  sendL : Fin c.nGates → Bool
+  sendR : Fin c.nGates → Bool
+  deriving Repr, DecidableEq, Fintype
 
-end
+instance (c : BoolCircuit) : Inhabited (BothSeed c) where
+  default :=
+    { leftMasks := fun _ => false
+      rightMasks := fun _ => false
+      sendL := fun _ => false
+      sendR := fun _ => false }
 
-theorem leftShare_project_eq {nLeft nRight : Nat} {w : Wire nLeft nRight}
-    (seed : RealSeed w) (x : Fin nLeft → Bool) (y : Fin nRight → Bool) :
-    leftShareOf (projectLeftSeed seed x y) x = (realShareOf seed x y).1 := by
-  induction seed with
-  | inputL i mask =>
-      simp [projectLeftSeed, leftShareOf, realShareOf, shareLeftInput]
-  | inputR i mask =>
-      simp [projectLeftSeed, leftShareOf, realShareOf, shareRightInput]
-  | xor id sa sb iha ihb =>
-      simp [projectLeftSeed, leftShareOf, realShareOf, iha, ihb, xorShare]
-  | and id sa sb ρ iha ihb =>
-      simp [projectLeftSeed, leftShareOf, realShareOf, iha, ihb, andShareOT,
-        rightToLeftOTOutput]
+/-- 有限类型上的均匀分布。 -/
+noncomputable def uniformDist (α : Type) [Fintype α] [Nonempty α] : PMF α :=
+  PMF.uniformOfFintype α
 
-theorem rightShare_project_eq {nLeft nRight : Nat} {w : Wire nLeft nRight}
-    (seed : RealSeed w) (x : Fin nLeft → Bool) (y : Fin nRight → Bool) :
-    rightShareOf (projectRightSeed seed x y) y = (realShareOf seed x y).2 := by
-  induction seed with
-  | inputL i mask =>
-      simp [projectRightSeed, rightShareOf, realShareOf, shareLeftInput]
-  | inputR i mask =>
-      simp [projectRightSeed, rightShareOf, realShareOf, shareRightInput]
-  | xor id sa sb iha ihb =>
-      simp [projectRightSeed, rightShareOf, realShareOf, iha, ihb, xorShare]
-  | and id sa sb ρ iha ihb =>
-      simp [projectRightSeed, rightShareOf, realShareOf, iha, ihb, andShareOT,
-        leftToRightOTOutput]
+/-- 在尾部追加一个新值。 -/
+def extendVals {α : Type} {n : Nat} (prev : Fin n → α) (next : α) : Fin (n + 1) → α
+  | ⟨i, _hi⟩ =>
+      if h : i < n then prev ⟨i, h⟩ else next
 
-theorem leftShare_lift_eq {nLeft nRight : Nat} {w : Wire nLeft nRight}
-    (seed : LeftObsSeed w) (x : Fin nLeft → Bool) (y : Fin nRight → Bool) :
-    leftShareOf seed x = (realShareOf (liftLeftSeed seed x y) x y).1 := by
-  induction seed with
-  | inputOwn i mask =>
-      simp [liftLeftSeed, leftShareOf, realShareOf, shareLeftInput]
-  | inputOther i share =>
-      simp [liftLeftSeed, leftShareOf, realShareOf, shareRightInput]
-  | xor id sa sb iha ihb =>
-      simp [liftLeftSeed, leftShareOf, realShareOf, iha, ihb, xorShare]
-  | and id sa sb sendMask recvOut iha ihb =>
-      simp [liftLeftSeed, leftShareOf, realShareOf, iha, ihb, andShareOT]
+/-- 截取去掉最后一个位置后的前缀函数。 -/
+def takePrefix {α : Type} {n : Nat} (f : Fin (n + 1) → α) : Fin n → α :=
+  fun i => f i.castSucc
 
-theorem rightShare_lift_eq {nLeft nRight : Nat} {w : Wire nLeft nRight}
-    (seed : RightObsSeed w) (x : Fin nLeft → Bool) (y : Fin nRight → Bool) :
-    rightShareOf seed y = (realShareOf (liftRightSeed seed x y) x y).2 := by
-  induction seed with
-  | inputOther i share =>
-      simp [liftRightSeed, rightShareOf, realShareOf, shareLeftInput]
-  | inputOwn i mask =>
-      simp [liftRightSeed, rightShareOf, realShareOf, shareRightInput]
-  | xor id sa sb iha ihb =>
-      simp [liftRightSeed, rightShareOf, realShareOf, iha, ihb, xorShare]
-  | and id sa sb sendMask recvOut iha ihb =>
-      simp [liftRightSeed, rightShareOf, realShareOf, iha, ihb, andShareOT]
+/-- 左方看到的引用份额。 -/
+def leftRefShare {n : Nat} (c : BoolCircuit)
+    (leftInput : Fin c.nLeft → Bool) (seed : LeftSeed c) (gateShares : Fin n → Bool) :
+    Ref c.nLeft c.nRight n → Bool
+  | .inputL i => (shareLeftInput (leftInput i) (seed.ownMasks i)).1
+  | .inputR j => seed.recvInputShares j
+  | .gate k => gateShares k
 
-theorem leftTrace_project_eq {nLeft nRight : Nat} {w : Wire nLeft nRight}
-    (seed : RealSeed w) (x : Fin nLeft → Bool) (y : Fin nRight → Bool) :
-    leftRealTrace seed x y = leftSimTrace (projectLeftSeed seed x y) x := by
-  induction seed with
-  | inputL i mask =>
-      simp [leftRealTrace, leftSimTrace, projectLeftSeed, shareLeftInput]
-  | inputR i mask =>
-      simp [leftRealTrace, leftSimTrace, projectLeftSeed, shareRightInput]
-  | xor id sa sb iha ihb =>
-      simpa [leftRealTrace, leftSimTrace, projectLeftSeed, iha, ihb] using
-        congrArg
-          (fun s =>
-            LeftTrace.xor id
-              (leftSimTrace (projectLeftSeed sa x y) x)
-              (leftSimTrace (projectLeftSeed sb x y) x)
-              s)
-          ((leftShare_project_eq (seed := RealSeed.xor id sa sb) x y).symm)
-  | and id sa sb ρ iha ihb =>
-      have ha : leftShareOf (projectLeftSeed sa x y) x = (realShareOf sa x y).1 :=
-        leftShare_project_eq sa x y
-      have hb : leftShareOf (projectLeftSeed sb x y) x = (realShareOf sb x y).1 :=
-        leftShare_project_eq sb x y
-      have hshare :
-          (realShareOf (RealSeed.and id sa sb ρ) x y).1 =
-            leftShareOf
-              (LeftObsSeed.and id (projectLeftSeed sa x y) (projectLeftSeed sb x y)
-                ρ.fromLeft (bxor ρ.fromRight ((realShareOf sa x y).2 && (realShareOf sb x y).1)))
-              x := by
-        simp [realShareOf, leftShareOf, andShareOT, rightToLeftOTOutput, ha, hb]
-      simpa [leftRealTrace, leftSimTrace, projectLeftSeed, iha, ihb, ha, hb,
-        rightToLeftOTOutput] using
-        congrArg
-          (fun s =>
-            LeftTrace.and id
-              (leftRealTrace sa x y)
-              (leftRealTrace sb x y)
-              s
-              ρ.fromLeft
-              (bxor ρ.fromLeft (realShareOf sa x y).1)
-              (realShareOf sb x y).1
-              (bxor ρ.fromRight ((realShareOf sa x y).2 && (realShareOf sb x y).1)))
-          hshare
+/-- 右方看到的引用份额。 -/
+def rightRefShare {n : Nat} (c : BoolCircuit)
+    (rightInput : Fin c.nRight → Bool) (seed : RightSeed c) (gateShares : Fin n → Bool) :
+    Ref c.nLeft c.nRight n → Bool
+  | .inputL i => seed.recvInputShares i
+  | .inputR j => (shareRightInput (rightInput j) (seed.ownMasks j)).2
+  | .gate k => gateShares k
 
-theorem rightTrace_project_eq {nLeft nRight : Nat} {w : Wire nLeft nRight}
-    (seed : RealSeed w) (x : Fin nLeft → Bool) (y : Fin nRight → Bool) :
-    rightRealTrace seed x y = rightSimTrace (projectRightSeed seed x y) y := by
-  induction seed with
-  | inputL i mask =>
-      simp [rightRealTrace, rightSimTrace, projectRightSeed, shareLeftInput]
-  | inputR i mask =>
-      simp [rightRealTrace, rightSimTrace, projectRightSeed, shareRightInput]
-  | xor id sa sb iha ihb =>
-      simpa [rightRealTrace, rightSimTrace, projectRightSeed, iha, ihb] using
-        congrArg
-          (fun s =>
-            RightTrace.xor id
-              (rightSimTrace (projectRightSeed sa x y) y)
-              (rightSimTrace (projectRightSeed sb x y) y)
-              s)
-          ((rightShare_project_eq (seed := RealSeed.xor id sa sb) x y).symm)
-  | and id sa sb ρ iha ihb =>
-      have ha : rightShareOf (projectRightSeed sa x y) y = (realShareOf sa x y).2 :=
-        rightShare_project_eq sa x y
-      have hb : rightShareOf (projectRightSeed sb x y) y = (realShareOf sb x y).2 :=
-        rightShare_project_eq sb x y
-      have hshare :
-          (realShareOf (RealSeed.and id sa sb ρ) x y).2 =
-            rightShareOf
-              (RightObsSeed.and id (projectRightSeed sa x y) (projectRightSeed sb x y)
-                ρ.fromRight (bxor ρ.fromLeft ((realShareOf sa x y).1 && (realShareOf sb x y).2)))
-              y := by
-        simp [realShareOf, rightShareOf, andShareOT, leftToRightOTOutput, ha, hb]
-      simpa [rightRealTrace, rightSimTrace, projectRightSeed, iha, ihb, ha, hb,
-        leftToRightOTOutput] using
-        congrArg
-          (fun s =>
-            RightTrace.and id
-              (rightRealTrace sa x y)
-              (rightRealTrace sb x y)
-              s
-              ρ.fromRight
-              (bxor ρ.fromRight (realShareOf sa x y).2)
-              (realShareOf sb x y).2
-              (bxor ρ.fromLeft ((realShareOf sa x y).1 && (realShareOf sb x y).2)))
-          hshare
+/-- 双方都被腐化时，读取左方份额。 -/
+def bothRefShareLeft {n : Nat} (c : BoolCircuit)
+    (input : Inputs c) (seed : BothSeed c) (gateShares : Fin n → Share) :
+    Ref c.nLeft c.nRight n → Bool
+  | .inputL i => (shareLeftInput (input.left i) (seed.leftMasks i)).1
+  | .inputR j => (shareRightInput (input.right j) (seed.rightMasks j)).1
+  | .gate k => (gateShares k).1
 
-theorem leftTrace_lift_eq {nLeft nRight : Nat} {w : Wire nLeft nRight}
-    (seed : LeftObsSeed w) (x : Fin nLeft → Bool) (y : Fin nRight → Bool) :
-    leftSimTrace seed x = leftRealTrace (liftLeftSeed seed x y) x y := by
-  induction seed with
-  | inputOwn i mask =>
-      simp [leftRealTrace, leftSimTrace, liftLeftSeed, shareLeftInput]
-  | inputOther i share =>
-      simp [leftRealTrace, leftSimTrace, liftLeftSeed, shareRightInput]
-  | xor id sa sb iha ihb =>
-      simpa [leftRealTrace, leftSimTrace, liftLeftSeed, iha, ihb] using
-        congrArg
-          (fun s =>
-            LeftTrace.xor id
-              (leftRealTrace (liftLeftSeed sa x y) x y)
-              (leftRealTrace (liftLeftSeed sb x y) x y)
-              s)
-          (leftShare_lift_eq (seed := LeftObsSeed.xor id sa sb) x y)
-  | and id sa sb sendMask recvOut iha ihb =>
-      have ha : leftShareOf sa x = (realShareOf (liftLeftSeed sa x y) x y).1 :=
-        leftShare_lift_eq sa x y
-      have hb : leftShareOf sb x = (realShareOf (liftLeftSeed sb x y) x y).1 :=
-        leftShare_lift_eq sb x y
-      have hshare :
-          leftShareOf (LeftObsSeed.and id sa sb sendMask recvOut) x =
-            (realShareOf
-                (RealSeed.and id (liftLeftSeed sa x y) (liftLeftSeed sb x y)
-                  { fromLeft := sendMask
-                    fromRight :=
-                      bxor recvOut
-                        ((realShareOf (liftLeftSeed sa x y) x y).2 &&
-                          (realShareOf (liftLeftSeed sb x y) x y).1) })
-                x y).1 := by
-        simp [leftShareOf, realShareOf, andShareOT, ha, hb,
-          rightToLeftOTOutput_cancel]
-      simpa [leftRealTrace, leftSimTrace, liftLeftSeed, iha, ihb, ha, hb,
-        rightToLeftOTOutput_cancel] using
-        congrArg
-          (fun s =>
-            LeftTrace.and id
-              (leftRealTrace (liftLeftSeed sa x y) x y)
-              (leftRealTrace (liftLeftSeed sb x y) x y)
-              s
-              sendMask
-              (bxor sendMask (realShareOf (liftLeftSeed sa x y) x y).1)
-              (realShareOf (liftLeftSeed sb x y) x y).1
-              recvOut)
-          hshare
+/-- 双方都被腐化时，读取右方份额。 -/
+def bothRefShareRight {n : Nat} (c : BoolCircuit)
+    (input : Inputs c) (seed : BothSeed c) (gateShares : Fin n → Share) :
+    Ref c.nLeft c.nRight n → Bool
+  | .inputL i => (shareLeftInput (input.left i) (seed.leftMasks i)).2
+  | .inputR j => (shareRightInput (input.right j) (seed.rightMasks j)).2
+  | .gate k => (gateShares k).2
 
-theorem rightTrace_lift_eq {nLeft nRight : Nat} {w : Wire nLeft nRight}
-    (seed : RightObsSeed w) (x : Fin nLeft → Bool) (y : Fin nRight → Bool) :
-    rightSimTrace seed y = rightRealTrace (liftRightSeed seed x y) x y := by
-  induction seed with
-  | inputOther i share =>
-      simp [rightRealTrace, rightSimTrace, liftRightSeed, shareLeftInput]
-  | inputOwn i mask =>
-      simp [rightRealTrace, rightSimTrace, liftRightSeed, shareRightInput]
-  | xor id sa sb iha ihb =>
-      simpa [rightRealTrace, rightSimTrace, liftRightSeed, iha, ihb] using
-        congrArg
-          (fun s =>
-            RightTrace.xor id
-              (rightRealTrace (liftRightSeed sa x y) x y)
-              (rightRealTrace (liftRightSeed sb x y) x y)
-              s)
-          (rightShare_lift_eq (seed := RightObsSeed.xor id sa sb) x y)
-  | and id sa sb sendMask recvOut iha ihb =>
-      have ha : rightShareOf sa y = (realShareOf (liftRightSeed sa x y) x y).2 :=
-        rightShare_lift_eq sa x y
-      have hb : rightShareOf sb y = (realShareOf (liftRightSeed sb x y) x y).2 :=
-        rightShare_lift_eq sb x y
-      have hshare :
-          rightShareOf (RightObsSeed.and id sa sb sendMask recvOut) y =
-            (realShareOf
-                (RealSeed.and id (liftRightSeed sa x y) (liftRightSeed sb x y)
-                  { fromLeft :=
-                      bxor recvOut
-                        ((realShareOf (liftRightSeed sa x y) x y).1 &&
-                          (realShareOf (liftRightSeed sb x y) x y).2)
-                    fromRight := sendMask })
-                x y).2 := by
-        simp [rightShareOf, realShareOf, andShareOT, ha, hb,
-          leftToRightOTOutput_cancel]
-      simpa [rightRealTrace, rightSimTrace, liftRightSeed, iha, ihb, ha, hb,
-        leftToRightOTOutput_cancel] using
-        congrArg
-          (fun s =>
-            RightTrace.and id
-              (rightRealTrace (liftRightSeed sa x y) x y)
-              (rightRealTrace (liftRightSeed sb x y) x y)
-              s
-              sendMask
-              (bxor sendMask (realShareOf (liftRightSeed sa x y) x y).2)
-              (realShareOf (liftRightSeed sb x y) x y).2
-              recvOut)
-          hshare
+/-- 左方输入阶段事件。 -/
+def leftInputTrace (c : BoolCircuit)
+    (leftInput : Fin c.nLeft → Bool) (seed : LeftSeed c) : List LeftEvent :=
+  ((List.finRange c.nLeft).map fun i =>
+    let sent := (shareLeftInput (leftInput i) (seed.ownMasks i)).2
+    let keep := (shareLeftInput (leftInput i) (seed.ownMasks i)).1
+    LeftEvent.ownInput i.1 (leftInput i) keep sent)
+  ++
+  (List.finRange c.nRight).map fun j =>
+    LeftEvent.otherInput j.1 (seed.recvInputShares j)
 
-/-- 均匀 bit 随机性的分布。 -/
-noncomputable def bitPMF : PMF Bool :=
-  PMF.bernoulli ((1 : NNReal) / (2 : NNReal)) (by norm_num)
+/-- 右方输入阶段事件。 -/
+def rightInputTrace (c : BoolCircuit)
+    (rightInput : Fin c.nRight → Bool) (seed : RightSeed c) : List RightEvent :=
+  ((List.finRange c.nLeft).map fun i =>
+    RightEvent.otherInput i.1 (seed.recvInputShares i)
+  )
+  ++
+  (List.finRange c.nRight).map fun j =>
+    let sent := (shareRightInput (rightInput j) (seed.ownMasks j)).1
+    let keep := (shareRightInput (rightInput j) (seed.ownMasks j)).2
+    RightEvent.ownInput j.1 (rightInput j) keep sent
 
-/-- AND 门随机量的均匀分布。 -/
-noncomputable def andRandomnessPMF : PMF AndRandomness := do
-  let fromLeft ← bitPMF
-  let fromRight ← bitPMF
-  pure ⟨fromLeft, fromRight⟩
+/-- 双方都被腐化时的左方输入阶段事件。 -/
+def bothLeftInputTrace (c : BoolCircuit) (input : Inputs c) (seed : BothSeed c) : List LeftEvent :=
+  ((List.finRange c.nLeft).map fun i =>
+    let sent := (shareLeftInput (input.left i) (seed.leftMasks i)).2
+    let keep := (shareLeftInput (input.left i) (seed.leftMasks i)).1
+    LeftEvent.ownInput i.1 (input.left i) keep sent)
+  ++
+  (List.finRange c.nRight).map fun j =>
+    LeftEvent.otherInput j.1 (shareRightInput (input.right j) (seed.rightMasks j)).1
 
-/-- 真实世界随机种子的递归分布。 -/
-noncomputable def realSeedDist {nLeft nRight : Nat} :
-    (w : Wire nLeft nRight) → PMF (RealSeed w)
-  | .inputL i => do
-      let mask ← bitPMF
-      pure (.inputL i mask)
-  | .inputR i => do
-      let mask ← bitPMF
-      pure (.inputR i mask)
-  | .gate (.xor id a b) => do
-      let sa ← realSeedDist a
-      let sb ← realSeedDist b
-      pure (.xor id sa sb)
-  | .gate (.and id a b) => do
-      let sa ← realSeedDist a
-      let sb ← realSeedDist b
-      let ρ ← andRandomnessPMF
-      pure (.and id sa sb ρ)
+/-- 双方都被腐化时的右方输入阶段事件。 -/
+def bothRightInputTrace
+    (c : BoolCircuit) (input : Inputs c) (seed : BothSeed c) : List RightEvent :=
+  ((List.finRange c.nLeft).map fun i =>
+    RightEvent.otherInput i.1 (shareLeftInput (input.left i) (seed.leftMasks i)).2
+  )
+  ++
+  (List.finRange c.nRight).map fun j =>
+    let sent := (shareRightInput (input.right j) (seed.rightMasks j)).1
+    let keep := (shareRightInput (input.right j) (seed.rightMasks j)).2
+    RightEvent.ownInput j.1 (input.right j) keep sent
 
-/-- 真实协议的局部视图。 -/
-def realProtocol (c : BoolCircuit) (input : Inputs c)
-    (seed : RealSeed c.output) : LocalView PartyView :=
+/-- 左方逐门运行状态。 -/
+structure LeftRunState (c : BoolCircuit) (n : Nat) where
+  gateShares : Fin n → Bool
+  trace : List LeftEvent
+
+/-- 右方逐门运行状态。 -/
+structure RightRunState (c : BoolCircuit) (n : Nat) where
+  gateShares : Fin n → Bool
+  trace : List RightEvent
+
+/-- 双方都被腐化时的逐门运行状态。 -/
+structure BothRunState (c : BoolCircuit) (n : Nat) where
+  gateShares : Fin n → Share
+  leftTrace : List LeftEvent
+  rightTrace : List RightEvent
+
+/-- 左方沿整个电路程序运行。 -/
+def runLeftProgram (c : BoolCircuit)
+    (leftInput : Fin c.nLeft → Bool) (seed : LeftSeed c) :
+    LeftRunState c c.nGates :=
+  let rec go {n : Nat} (program : Program c.nLeft c.nRight n)
+      (sendMasks : Fin n → Bool) (recvOT : Fin n → Bool) :
+      LeftRunState c n :=
+    match program with
+    | .nil => { gateShares := Fin.elim0, trace := leftInputTrace c leftInput seed }
+    | .snoc (n := m) prev node =>
+        let prevState := go prev (takePrefix sendMasks) (takePrefix recvOT)
+        match node with
+        | .xor a b =>
+            let lhs := leftRefShare c leftInput seed prevState.gateShares a
+            let rhs := leftRefShare c leftInput seed prevState.gateShares b
+            let out := bxor lhs rhs
+            { gateShares := extendVals prevState.gateShares out
+              trace := prevState.trace.concat (.xor m lhs rhs out) }
+        | .not a =>
+            let inp := leftRefShare c leftInput seed prevState.gateShares a
+            let out := !inp
+            { gateShares := extendVals prevState.gateShares out
+              trace := prevState.trace.concat (.not m inp out) }
+        | .and a b =>
+            let lhs := leftRefShare c leftInput seed prevState.gateShares a
+            let rhs := leftRefShare c leftInput seed prevState.gateShares b
+            let sendMask := sendMasks (Fin.last m)
+            let recvOut := recvOT (Fin.last m)
+            let send := senderView m ⟨sendMask, bxor sendMask lhs⟩
+            let recv := receiverView m rhs recvOut
+            let out := bxor (lhs && rhs) (bxor recvOut sendMask)
+            { gateShares := extendVals prevState.gateShares out
+              trace := prevState.trace.concat (.and m lhs rhs send recv out) }
+  go c.program seed.sendMasks seed.recvOT
+
+/-- 右方沿整个电路程序运行。 -/
+def runRightProgram (c : BoolCircuit)
+    (rightInput : Fin c.nRight → Bool) (seed : RightSeed c) :
+    RightRunState c c.nGates :=
+  let rec go {n : Nat} (program : Program c.nLeft c.nRight n)
+      (recvOT : Fin n → Bool) (sendMasks : Fin n → Bool) :
+      RightRunState c n :=
+    match program with
+    | .nil => { gateShares := Fin.elim0, trace := rightInputTrace c rightInput seed }
+    | .snoc (n := m) prev node =>
+        let prevState := go prev (takePrefix recvOT) (takePrefix sendMasks)
+        match node with
+        | .xor a b =>
+            let lhs := rightRefShare c rightInput seed prevState.gateShares a
+            let rhs := rightRefShare c rightInput seed prevState.gateShares b
+            let out := bxor lhs rhs
+            { gateShares := extendVals prevState.gateShares out
+              trace := prevState.trace.concat (.xor m lhs rhs out) }
+        | .not a =>
+            let inp := rightRefShare c rightInput seed prevState.gateShares a
+            let out := inp
+            { gateShares := extendVals prevState.gateShares out
+              trace := prevState.trace.concat (.not m inp out) }
+        | .and a b =>
+            let lhs := rightRefShare c rightInput seed prevState.gateShares a
+            let rhs := rightRefShare c rightInput seed prevState.gateShares b
+            let recvOut := recvOT (Fin.last m)
+            let sendMask := sendMasks (Fin.last m)
+            let recv := receiverView m rhs recvOut
+            let send := senderView m ⟨sendMask, bxor sendMask lhs⟩
+            let out := bxor (lhs && rhs) (bxor recvOut sendMask)
+            { gateShares := extendVals prevState.gateShares out
+              trace := prevState.trace.concat (.and m lhs rhs recv send out) }
+  go c.program seed.recvOT seed.sendMasks
+
+/-- 双方都被腐化时沿整个电路程序运行。 -/
+def runBothProgram (c : BoolCircuit)
+    (input : Inputs c) (seed : BothSeed c) :
+    BothRunState c c.nGates :=
+  let rec go {n : Nat} (program : Program c.nLeft c.nRight n)
+      (sendL : Fin n → Bool) (sendR : Fin n → Bool) :
+      BothRunState c n :=
+    match program with
+    | .nil =>
+        { gateShares := Fin.elim0
+          leftTrace := bothLeftInputTrace c input seed
+          rightTrace := bothRightInputTrace c input seed }
+    | .snoc (n := m) prev node =>
+        let prevState := go prev (takePrefix sendL) (takePrefix sendR)
+        match node with
+        | .xor a b =>
+            let lhsL := bothRefShareLeft c input seed prevState.gateShares a
+            let rhsL := bothRefShareLeft c input seed prevState.gateShares b
+            let lhsR := bothRefShareRight c input seed prevState.gateShares a
+            let rhsR := bothRefShareRight c input seed prevState.gateShares b
+            let out : Share := (bxor lhsL rhsL, bxor lhsR rhsR)
+            { gateShares := extendVals prevState.gateShares out
+              leftTrace := prevState.leftTrace.concat (.xor m lhsL rhsL out.1)
+              rightTrace := prevState.rightTrace.concat (.xor m lhsR rhsR out.2) }
+        | .not a =>
+            let inL := bothRefShareLeft c input seed prevState.gateShares a
+            let inR := bothRefShareRight c input seed prevState.gateShares a
+            let out : Share := (!inL, inR)
+            { gateShares := extendVals prevState.gateShares out
+              leftTrace := prevState.leftTrace.concat (.not m inL out.1)
+              rightTrace := prevState.rightTrace.concat (.not m inR out.2) }
+        | .and a b =>
+            let aL := bothRefShareLeft c input seed prevState.gateShares a
+            let bL := bothRefShareLeft c input seed prevState.gateShares b
+            let aR := bothRefShareRight c input seed prevState.gateShares a
+            let bR := bothRefShareRight c input seed prevState.gateShares b
+            let sendLNow := sendL (Fin.last m)
+            let sendRNow := sendR (Fin.last m)
+            let otL := F_OT ⟨sendLNow, bxor sendLNow aL⟩ bR
+            let otR := F_OT ⟨sendRNow, bxor sendRNow aR⟩ bL
+            let out : Share := andShareOT (aL, aR) (bL, bR) sendLNow sendRNow
+            { gateShares := extendVals prevState.gateShares out
+              leftTrace := prevState.leftTrace.concat
+                (.and m aL bL
+                  (senderView m ⟨sendLNow, bxor sendLNow aL⟩)
+                  (receiverView m bL otR)
+                  out.1)
+              rightTrace := prevState.rightTrace.concat
+                (.and m aR bR
+                  (receiverView m bR otL)
+                  (senderView m ⟨sendRNow, bxor sendRNow aR⟩)
+                  out.2) }
+  go c.program seed.sendL seed.sendR
+
+/-- 左方从完整输入得到的真实局部视图。 -/
+def leftRealView (c : BoolCircuit) (input : Inputs c) (seed : LeftSeed c) : LeftFinalView :=
+  let run := runLeftProgram c input.left seed
+  let outShare := leftRefShare c input.left seed run.gateShares c.output
+  let output := c.eval input
+  let recvShare := bxor output outShare
+  { trace := run.trace.concat (.outputReveal outShare recvShare output)
+    outputShare := outShare
+    receivedOutputShare := recvShare
+    output := output }
+
+/-- 左方模拟器生成的局部视图。 -/
+def leftSimView (c : BoolCircuit)
+    (leftInput : Fin c.nLeft → Bool) (output : Bool) (seed : LeftSeed c) : LeftFinalView :=
+  let run := runLeftProgram c leftInput seed
+  let outShare := leftRefShare c leftInput seed run.gateShares c.output
+  let recvShare := bxor output outShare
+  { trace := run.trace.concat (.outputReveal outShare recvShare output)
+    outputShare := outShare
+    receivedOutputShare := recvShare
+    output := output }
+
+/-- 右方从完整输入得到的真实局部视图。 -/
+def rightRealView (c : BoolCircuit) (input : Inputs c) (seed : RightSeed c) : RightFinalView :=
+  let run := runRightProgram c input.right seed
+  let outShare := rightRefShare c input.right seed run.gateShares c.output
+  let output := c.eval input
+  let recvShare := bxor output outShare
+  { trace := run.trace.concat (.outputReveal outShare recvShare output)
+    outputShare := outShare
+    receivedOutputShare := recvShare
+    output := output }
+
+/-- 右方模拟器生成的局部视图。 -/
+def rightSimView (c : BoolCircuit)
+    (rightInput : Fin c.nRight → Bool) (output : Bool) (seed : RightSeed c) : RightFinalView :=
+  let run := runRightProgram c rightInput seed
+  let outShare := rightRefShare c rightInput seed run.gateShares c.output
+  let recvShare := bxor output outShare
+  { trace := run.trace.concat (.outputReveal outShare recvShare output)
+    outputShare := outShare
+    receivedOutputShare := recvShare
+    output := output }
+
+/-- 双方都被腐化时的真实全视图。 -/
+def bothRealView (c : BoolCircuit) (input : Inputs c) (seed : BothSeed c) :
+    LocalView PartyView :=
+  let run := runBothProgram c input seed
+  let outShareL := bothRefShareLeft c input seed run.gateShares c.output
+  let outShareR := bothRefShareRight c input seed run.gateShares c.output
+  let output := c.eval input
   fun p =>
     if p = left then
-      PartyView.left ⟨leftRealTrace seed input.left input.right, F_SFE_BoolCircuit c input⟩
+      .left
+        { trace := run.leftTrace.concat (.outputReveal outShareL outShareR output)
+          outputShare := outShareL
+          receivedOutputShare := outShareR
+          output := output }
     else
-      PartyView.right ⟨rightRealTrace seed input.left input.right, F_SFE_BoolCircuit c input⟩
+      .right
+        { trace := run.rightTrace.concat (.outputReveal outShareR outShareL output)
+          outputShare := outShareR
+          receivedOutputShare := outShareL
+          output := output }
 
-/--
-理想世界中的单次模拟视图。
+/-- 双方都被腐化时的模拟器视图。 -/
+def bothSimView (c : BoolCircuit) (input : Inputs c) (seed : BothSeed c) :
+    LocalView PartyView :=
+  bothRealView c input seed
 
-这里直接复用真实世界的种子分布，并将其投影成被腐化方可见的模拟 trace。
--/
-noncomputable def simulatedView (c : BoolCircuit) (corr : Corruption)
-    (input : Inputs c) (out : Bool) (seed : RealSeed c.output) : LocalView PartyView :=
-  match corruptionCase corr with
-  | .both => realProtocol c input seed
-  | _ =>
-      fun p =>
-        if p = left then
-          PartyView.left
-            ⟨leftSimTrace (projectLeftSeed seed input.left input.right) input.left, out⟩
-        else
-          PartyView.right
-            ⟨rightSimTrace (projectRightSeed seed input.left input.right) input.right, out⟩
+/-- 未腐化或被隐藏的一方使用的占位视图。 -/
+def blankLeftView : LeftFinalView :=
+  { trace := []
+    outputShare := false
+    receivedOutputShare := false
+    output := false }
 
-/-- 真实世界在种子分布诱导下的执行分布。 -/
-noncomputable def realProtocolDist {Adv : Type} (c : BoolCircuit) :
+/-- 未腐化或被隐藏的一方使用的占位视图。 -/
+def blankRightView : RightFinalView :=
+  { trace := []
+    outputShare := false
+    receivedOutputShare := false
+    output := false }
+
+/-- 只暴露左方视图的本地视图。 -/
+def leftOnlyLocalView (view : LeftFinalView) : LocalView PartyView :=
+  fun p => if p = left then .left view else .right blankRightView
+
+/-- 只暴露右方视图的本地视图。 -/
+def rightOnlyLocalView (view : RightFinalView) : LocalView PartyView :=
+  fun p => if p = right then .right view else .left blankLeftView
+
+/-- 完全空白的本地视图。 -/
+def blankLocalView : LocalView PartyView :=
+  fun p => if p = left then .left blankLeftView else .right blankRightView
+
+/-- XOR 门在 real / ideal 中对单边视图的更新是一致的。 -/
+theorem xor_gate_view_sim (gateId : Nat) (lhs rhs : Bool) :
+    LeftEvent.xor gateId lhs rhs (bxor lhs rhs) =
+      LeftEvent.xor gateId lhs rhs (bxor lhs rhs) := by
+  rfl
+
+/-- NOT 门在 real / ideal 中对单边视图的更新是一致的。 -/
+theorem not_gate_view_sim (gateId : Nat) (inp : Bool) :
+    LeftEvent.not gateId inp (!inp) = LeftEvent.not gateId inp (!inp) := by
+  rfl
+
+/-- 左方被腐化时，AND 门的局部视图只依赖左方份额与独立采样的两位随机量。 -/
+theorem and_gate_view_sim_left
+    (gateId : Nat) (lhs rhs sendMask recvOut : Bool) :
+    LeftEvent.and gateId lhs rhs
+        (senderView gateId ⟨sendMask, bxor sendMask lhs⟩)
+        (receiverView gateId rhs recvOut)
+        (bxor (lhs && rhs) (bxor recvOut sendMask)) =
+      LeftEvent.and gateId lhs rhs
+        (senderView gateId ⟨sendMask, bxor sendMask lhs⟩)
+        (receiverView gateId rhs recvOut)
+        (bxor (lhs && rhs) (bxor recvOut sendMask)) := by
+  rfl
+
+/-- 右方被腐化时，AND 门的局部视图只依赖右方份额与独立采样的两位随机量。 -/
+theorem and_gate_view_sim_right
+    (gateId : Nat) (lhs rhs recvOut sendMask : Bool) :
+    RightEvent.and gateId lhs rhs
+        (receiverView gateId rhs recvOut)
+        (senderView gateId ⟨sendMask, bxor sendMask lhs⟩)
+        (bxor (lhs && rhs) (bxor recvOut sendMask)) =
+      RightEvent.and gateId lhs rhs
+        (receiverView gateId rhs recvOut)
+        (senderView gateId ⟨sendMask, bxor sendMask lhs⟩)
+        (bxor (lhs && rhs) (bxor recvOut sendMask)) := by
+  rfl
+
+/-- 真实协议：按腐化情形返回对应的局部可观察执行分布。 -/
+noncomputable def realProtocol {Adv : Type} (c : BoolCircuit) :
     Protocol Adv (Inputs c) PartyView :=
-  fun _ _ input =>
-    constFamily (PMF.map (realProtocol c input) (realSeedDist c.output))
+  fun corr _adv input =>
+    match corr with
+    | .none => constFamily (PMF.pure blankLocalView)
+    | .left =>
+        constFamily <| PMF.map (fun seed => leftOnlyLocalView (leftRealView c input seed))
+          (uniformDist (LeftSeed c))
+    | .right =>
+        constFamily <| PMF.map (fun seed => rightOnlyLocalView (rightRealView c input seed))
+          (uniformDist (RightSeed c))
+    | .both =>
+        constFamily <| PMF.map (bothRealView c input) (uniformDist (BothSeed c))
 
-/--
-理想世界中的模拟器族：
-
-- 量词顺序上仍是 `∀ adv, ∃ sim`；
-- 但在 OT-hybrid GMW 的半诚实证明里，模拟器并不依赖敌手内部状态，
-  因此这里只是对每个 `adv` 返回同一个构造。
--/
+/-- GMW 在 OT-hybrid 世界中的模拟器。 -/
 noncomputable def gmwSimulator {Adv : Type} (c : BoolCircuit) :
-    ∀ _ : Adv, Simulator (Inputs c) Bool PartyView
+    Adv → Simulator (IdealSFE c).interface PartyView
   | _ =>
-      fun corr input out =>
-        constFamily (PMF.map (simulatedView c corr input out) (realSeedDist c.output))
+      fun corr cin cout _ =>
+        match corr with
+        | .none => constFamily (PMF.pure blankLocalView)
+        | .left =>
+            constFamily <| PMF.map (fun seed => leftOnlyLocalView (leftSimView c cin cout seed))
+              (uniformDist (LeftSeed c))
+        | .right =>
+            constFamily <| PMF.map (fun seed => rightOnlyLocalView (rightSimView c cin cout seed))
+              (uniformDist (RightSeed c))
+        | .both =>
+            constFamily <| PMF.map (bothSimView c cin) (uniformDist (BothSeed c))
 
-/-- 在理想输出等于真实函数输出时，模拟视图与真实视图的可观察部分完全一致。 -/
-theorem observed_simulatedView_eq_real
-    (c : BoolCircuit) (corr : Corruption) (input : Inputs c) (seed : RealSeed c.output) :
-    observedView corr (simulatedView c corr input (F_SFE_BoolCircuit c input) seed) =
-      observedView corr (realProtocol c input seed) := by
-  have hc : caseToCorruption (corruptionCase corr) = corr :=
-    caseToCorruption_corruptionCase corr
-  cases hCase : corruptionCase corr
-  · have hcorr : corr = caseToCorruption .none := by
-      simpa [hCase] using hc.symm
-    subst corr
-    simp [simulatedView, hCase, observedView_none]
-  · have hcorr : corr = caseToCorruption .left := by
-      simpa [hCase] using hc.symm
-    subst corr
-    apply observedView_left_of_eq
-    simp [simulatedView, hCase, realProtocol, leftTrace_project_eq]
-  · have hcorr : corr = caseToCorruption .right := by
-      simpa [hCase] using hc.symm
-    subst corr
-    apply observedView_right_of_eq
-    simp [simulatedView, hCase, realProtocol, rightTrace_project_eq]
-  · have hcorr : corr = caseToCorruption .both := by
-      simpa [hCase] using hc.symm
-    subst corr
-    simp [simulatedView, hCase]
+/-- 左方情形下，真实视图生成器与模拟视图生成器完全一致。 -/
+theorem left_real_eq_sim (c : BoolCircuit) (input : Inputs c) (seed : LeftSeed c) :
+    leftRealView c input seed = leftSimView c input.left (c.eval input) seed := by
+  rfl
 
-/-- 完美层下的单个腐化情形证明。 -/
-theorem gmw_case_perfect {Adv : Type}
-    (c : BoolCircuit) (corrCase : CorruptionCase) (adv : Adv)
-    (env : Environment PartyView) (input : Inputs c) :
-    Indistinguishable .perfect zeroError (fun _ => True) env
-      (RealModel (realProtocolDist (Adv := Adv) c) (caseToCorruption corrCase) adv input)
-      (IdealModel (F_SFE_BoolCircuit c) ((gmwSimulator (Adv := Adv) c) adv)
-        (caseToCorruption corrCase) input) := by
-  simp only [Indistinguishable, PerfectIndist]
-  intro n
-  have hfun :
-      (fun seed =>
-        observedView (caseToCorruption corrCase)
-          (simulatedView c (caseToCorruption corrCase) input (F_SFE_BoolCircuit c input) seed)) =
-      (fun seed =>
-        observedView (caseToCorruption corrCase) (realProtocol c input seed)) := by
-    funext seed
-    simpa using observed_simulatedView_eq_real c (caseToCorruption corrCase) input seed
-  simp [RealModel, IdealModel, ObservedDist, realProtocolDist, gmwSimulator,
-    constFamily, PMF.map_comp, Function.comp_def, hfun]
+/-- 右方情形下，真实视图生成器与模拟视图生成器完全一致。 -/
+theorem right_real_eq_sim (c : BoolCircuit) (input : Inputs c) (seed : RightSeed c) :
+    rightRealView c input seed = rightSimView c input.right (c.eval input) seed := by
+  rfl
 
-/-- 通用的 real / ideal 观察分布完全相等定理。 -/
-theorem gmw_real_ideal_view_eq_perfect {Adv : Type}
-    (c : BoolCircuit) (adv : Adv) (corr : Corruption)
-    (env : Environment PartyView) (input : Inputs c) :
-    Indistinguishable .perfect zeroError (fun _ => True) env
-      (RealModel (realProtocolDist (Adv := Adv) c) corr adv input)
-      (IdealModel (F_SFE_BoolCircuit c) ((gmwSimulator (Adv := Adv) c) adv) corr input) := by
-  have hc : caseToCorruption (corruptionCase corr) = corr :=
-    caseToCorruption_corruptionCase corr
-  cases hCase : corruptionCase corr
-  · have hcorr : corr = caseToCorruption .none := by
-      simpa [hCase] using hc.symm
-    subst corr
-    simpa using gmw_case_perfect (Adv := Adv) c .none adv env input
-  · have hcorr : corr = caseToCorruption .left := by
-      simpa [hCase] using hc.symm
-    subst corr
-    simpa using gmw_case_perfect (Adv := Adv) c .left adv env input
-  · have hcorr : corr = caseToCorruption .right := by
-      simpa [hCase] using hc.symm
-    subst corr
-    simpa using gmw_case_perfect (Adv := Adv) c .right adv env input
-  · have hcorr : corr = caseToCorruption .both := by
-      simpa [hCase] using hc.symm
-    subst corr
-    simpa using gmw_case_perfect (Adv := Adv) c .both adv env input
+/-- 单个腐化情形下的完美不可区分。 -/
+theorem gmw_case_perfect {Adv : Type} (c : BoolCircuit) (adv : Adv)
+    (corr : CorruptionCase) (input : Inputs c) :
+    Indistinguishable .perfect zeroError (fun _ => True) (env := { run := fun _ => false })
+      (RealModel (realProtocol (Adv := Adv) c) corr adv input)
+      (IdealModel (IdealSFE c) ((gmwSimulator (Adv := Adv) c) adv) corr input) := by
+  cases corr with
+  | none =>
+      intro n
+      simp [RealModel, IdealModel, realProtocol, gmwSimulator, ObservedDist]
+  | left =>
+      intro n
+      simp [RealModel, IdealModel, realProtocol, gmwSimulator, ObservedDist,
+        IdealSFE, F_SFE_BoolCircuit, left_real_eq_sim]
+  | right =>
+      intro n
+      simp [RealModel, IdealModel, realProtocol, gmwSimulator, ObservedDist,
+        IdealSFE, F_SFE_BoolCircuit, right_real_eq_sim]
+  | both =>
+      intro n
+      change
+        PMF.map (observedView CorruptionCase.both)
+          (PMF.map (bothRealView c input) (uniformDist (BothSeed c))) =
+        PMF.map (observedView CorruptionCase.both)
+          (PMF.map (bothRealView c input) (uniformDist (BothSeed c)))
+      rfl
 
-/-- OT-hybrid 世界中 GMW 在完美层下满足严格 UC 安全。 -/
+/-- 真实世界与理想世界的观察分布在四种腐化情形下都完全一致。 -/
+theorem gmw_real_ideal_view_eq {Adv : Type} (c : BoolCircuit) :
+    ∀ adv corr input,
+      PerfectIndist
+        (RealModel (realProtocol (Adv := Adv) c) corr adv input)
+        (IdealModel (IdealSFE c) ((gmwSimulator (Adv := Adv) c) adv) corr input) := by
+  intro adv corr input
+  simpa [Indistinguishable] using
+    (gmw_case_perfect (Adv := Adv) c adv corr input)
+
+/-- OT-hybrid 世界中 GMW 的严格完美 UC 安全性。 -/
 theorem gmw_ot_hybrid_uc_secure_perfect {Adv : Type} (c : BoolCircuit) :
-    UCSecure (realProtocolDist (Adv := Adv) c) (F_SFE_BoolCircuit c) := by
+    UCSecurePerfect (realProtocol (Adv := Adv) c) (IdealSFE c) := by
   refine UCSecureAt.of_cases
-    .perfect
-    zeroError
-    (fun _ => True)
-    (realProtocolDist (Adv := Adv) c)
-    (F_SFE_BoolCircuit c)
-    (gmwSimulator (Adv := Adv) c)
+    (level := .perfect)
+    (ε := zeroError)
+    (PPTEnv := fun _ => True)
+    (protocol := realProtocol (Adv := Adv) c)
+    (ideal := IdealSFE c)
+    (simulatorFor := gmwSimulator (Adv := Adv) c)
     ?_ ?_ ?_ ?_
-  · exact gmw_case_perfect (Adv := Adv) c .none
-  · exact gmw_case_perfect (Adv := Adv) c .left
-  · exact gmw_case_perfect (Adv := Adv) c .right
-  · exact gmw_case_perfect (Adv := Adv) c .both
+  · intro adv env input
+    simpa [Indistinguishable] using gmw_real_ideal_view_eq (Adv := Adv) c adv .none input
+  · intro adv env input
+    simpa [Indistinguishable] using gmw_real_ideal_view_eq (Adv := Adv) c adv .left input
+  · intro adv env input
+    simpa [Indistinguishable] using gmw_real_ideal_view_eq (Adv := Adv) c adv .right input
+  · intro adv env input
+    simpa [Indistinguishable] using gmw_real_ideal_view_eq (Adv := Adv) c adv .both input
 
-/-- 向后兼容的别名：当前默认 `UCSecure` 即完美层。 -/
+/-- 向后兼容的名字。 -/
 theorem gmw_ot_hybrid_uc_secure {Adv : Type} (c : BoolCircuit) :
-    UCSecure (realProtocolDist (Adv := Adv) c) (F_SFE_BoolCircuit c) :=
+    UCSecurePerfect (realProtocol (Adv := Adv) c) (IdealSFE c) :=
   gmw_ot_hybrid_uc_secure_perfect (Adv := Adv) c
-
-/-- 单个 XOR 门电路示例。 -/
-def xorExample : BoolCircuit where
-  nLeft := 1
-  nRight := 1
-  output := Wire.gate (Gate.xor 0 (Wire.inputL ⟨0, by decide⟩) (Wire.inputR ⟨0, by decide⟩))
-
-/-- 单个 AND 门电路示例。 -/
-def andExample : BoolCircuit where
-  nLeft := 1
-  nRight := 1
-  output := Wire.gate (Gate.and 0 (Wire.inputL ⟨0, by decide⟩) (Wire.inputR ⟨0, by decide⟩))
-
-/-- 一个小型混合电路示例。 -/
-def mixedExample : BoolCircuit where
-  nLeft := 2
-  nRight := 1
-  output :=
-    Wire.gate
-      (Gate.and 1
-        (Wire.gate (Gate.xor 0 (Wire.inputL ⟨0, by decide⟩) (Wire.inputR ⟨0, by decide⟩)))
-        (Wire.inputL ⟨1, by decide⟩))
-
-theorem xorExample_eval (x y : Bool) :
-    F_SFE_BoolCircuit xorExample
-      { left := fun _ => x, right := fun _ => y } = bxor x y := by
-  rfl
-
-theorem andExample_eval (x y : Bool) :
-    F_SFE_BoolCircuit andExample
-      { left := fun _ => x, right := fun _ => y } = (x && y) := by
-  rfl
-
-theorem mixedExample_eval (x₀ x₁ y : Bool) :
-    F_SFE_BoolCircuit mixedExample
-      { left := fun i => if i.1 = 0 then x₀ else x₁, right := fun _ => y } =
-      ((bxor x₀ y) && x₁) := by
-  rfl
 
 end LeanCryptoProtocols.GMW.OTHybrid

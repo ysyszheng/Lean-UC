@@ -1,3 +1,5 @@
 import LeanCryptoProtocols.UC.Core
 import LeanCryptoProtocols.UC.Functionality.OT
+import LeanCryptoProtocols.Circuit.BoolCircuit
+import LeanCryptoProtocols.Circuit.Examples
 import LeanCryptoProtocols.GMW.OTHybrid
