@@ -1,141 +1,122 @@
 # lean-crypto-protocols
 
-这是一个用 Lean 形式化隐私计算协议安全证明的实验项目。当前目标不是一次性覆盖完整 UC 机器模型，而是先做一个可复用、可审计的最小核心：
+这是一个用 Lean 形式化隐私计算协议安全证明的实验项目。
 
-- 两方协议
-- 静态腐化
-- 半诚实敌手
-- 同步固定轮次
-- 完美 / 统计 / 计算三层不可区分接口
-- 优先支持 OT-hybrid 世界中的协议证明
+当前主线已经切换为按 Canetti 2000 第 2 节重建 UC 框架，而不是继续沿用旧的
+“直接返回 view 分布”的协议接口。
 
-## 当前已实现内容
+## 当前主框架
 
-### 1. UC 核心接口
+当前框架固定在以下边界：
+
+- `n` 方协议
+- static corruption
+- semi-honest 敌手
+- authenticated communication
+- 完美 / 统计 / 计算 三层不可区分
+- universal composition theorem
+
+## 模块结构
+
+### 1. Machine / Protocol Shape
 
 文件：
 
-- `LeanCryptoProtocols/UC/Core.lean`
+- `LeanCryptoProtocols/UC/Machine.lean`
 
-提供了：
+提供：
 
-- `CorruptionCase`
-- `ProtocolMachine`
-- `IdealInterface`
-- `IdealFunctionality`
-- `Protocol`
-- `Simulator`
-- `ObservedDist`
+- `MachineId`
+- `PortLabel`
+- `CommPort`
+- `Envelope`
+- `MachineProgram`
+- `Machine`
+- `ProtocolShape`
+- caller / subroutine 的 identity 关系
+
+这一层只描述协议的静态结构，不直接给出 UC 安全定义。
+
+### 2. Indistinguishability
+
+文件：
+
+- `LeanCryptoProtocols/UC/Indistinguishability.lean`
+
+提供：
+
 - `PerfectIndist`
 - `StatisticalIndist`
 - `ComputationalIndist`
-- `UCSecureAt`
-- `UCSecurePerfect`
+- `Negligible`
+- `Advantage`
 
-其中严格 UC 定义写成：
+以及基础闭包引理，例如：
 
-`∀ adv, ∃ sim, ∀ env, indistinguishable (...)`
+- 传递性
+- `Perfect → Statistical`
+- `Perfect → Computational`
+- `Negligible.add`
+- `Negligible.const_mul`
 
-并且 simulator 的输入被严格裁剪为：
-
-- 被腐化方输入
-- 被腐化方输出
-- 理想功能允许泄漏的信息
-
-不会直接拿到诚实方输入或真实执行随机性。
-
-### 2. OT 理想功能
+### 3. Security
 
 文件：
 
-- `LeanCryptoProtocols/UC/Functionality/OT.lean`
-- `LeanCryptoProtocols/UC/Functionality/SFE.lean`
+- `LeanCryptoProtocols/UC/Security.lean`
 
-当前提供 bit 级的 1-out-of-2 OT 理想功能 `F_OT`，并显式建模：
+提供：
 
-- sender 输入
-- receiver 选择位
-- 返回值
-- sender / receiver 局部事件接口
+- `Environment`
+- `Adversary`
+- `Simulator`
+- `ExecutableProtocol`
+- `IdealFunctionality`
+- `IdealProtocol`
+- `UCEmulatesAt`
+- `UCRealizesAt`
 
-这部分被 GMW 的 AND 门子协议直接调用。
+其中 `UCEmulatesAt` 的形状是标准的：
 
-另外还提供公开布尔电路上的安全函数计算理想功能：
+`∀ adversary, ∃ simulator, ∀ environment, indistinguishable`
 
-- `F_BoolCircuitSFE`
-- `IdealBoolCircuitSFE`
-
-GMW 的目标 ideal functionality 现在直接来自 `LeanCryptoProtocols/UC/Functionality/SFE.lean`。
-
-### 3. DAG 布尔电路组件
+### 4. Composition
 
 文件：
+
+- `LeanCryptoProtocols/UC/Composition.lean`
+
+提供：
+
+- `SubroutineProtocol`
+- `Compatible`
+- `IdentityCompatible`
+- `ReplaceSubroutine`
+- `CompositionContext`
+- `CompositionSound`
+- `universalComposition`
+
+`universalComposition` 是当前框架中的主定理：如果一个 subroutine protocol
+UC-emulate 它的理想版本，那么在满足 compatible / identity-compatible
+以及组合语义约化条件时，把它替换进任意宿主协议后，整体协议仍保持相同安全级别的 UC-emulation。
+
+### 5. Authenticated Communication
+
+文件：
+
+- `LeanCryptoProtocols/UC/Channel.lean`
+
+提供最小的 authenticated communication `channel machine` 组件。
+
+## 其他现有模块
+
+布尔电路组件仍然保留：
 
 - `LeanCryptoProtocols/Circuit/BoolCircuit.lean`
 - `LeanCryptoProtocols/Circuit/Examples.lean`
 
-电路使用“按拓扑顺序追加节点”的方式表示 DAG，因此：
-
-- 共享子表达式天然可表示
-- 无环性由类型保证
-- 当前支持 `xor`、`and`、`not`
-
-示例包括：
-
-- 单个 XOR 门
-- 单个 AND 门
-- 单个 NOT 门
-- 含共享子图的 DAG
-- 一个混合小电路
-
-### 4. OT-hybrid 世界中的 GMW
-
-文件：
-
-- `LeanCryptoProtocols/GMW/OTHybrid/Model.lean`
-- `LeanCryptoProtocols/GMW/OTHybrid/Security.lean`
-- `LeanCryptoProtocols/GMW/OTHybrid/Certificate.lean`
-- `LeanCryptoProtocols/GMW/OTHybrid.lean`
-
-当前已证明：
-
-- `gmw_xor_gate_correct`
-- `gmw_not_gate_correct`
-- `gmw_and_gate_ot_hybrid_correct`
-- `gmw_real_ideal_view_eq`
-- `gmw_ot_hybrid_uc_secure_perfect`
-
-这里的 GMW 证明边界是：
-
-- OT-hybrid world
-- 静态半诚实
-- 同步轮次
-- 完美 UC 安全
-
-实现上，真实协议和模拟器都被写成“按腐化情形产生局部可观察执行分布”的事件驱动生成器。  
-特别地，左/右单边 simulator 只依赖：
-
-- 被腐化方输入
-- 理想输出
-- 自己采样的随机种子
-
-不会读取诚实方输入，也不会重放真实执行 witness。
-
-### 5. Certificate 层
-
-当前项目开始为协议提供单独的审计入口文件 `Certificate.lean`。
-
-对 GMW / OT-hybrid 而言，三层结构是：
-
-- `Model.lean`：协议建模入口，包含 world 中需要公开的协议对象与目标 ideal functionality
-- `Security.lean`：详细 simulator 构造与完整证明脚本
-- `Certificate.lean`：审核者最小核查面，完整陈述 world / protocol / idealF / UC theorem
-
-审计建议路径：
-
-1. 先读 `LeanCryptoProtocols/GMW/OTHybrid/Certificate.lean`
-2. 如需核对协议建模，再读 `LeanCryptoProtocols/GMW/OTHybrid/Model.lean`
-3. 只有在需要检查详细证明实现时，再读 `LeanCryptoProtocols/GMW/OTHybrid/Security.lean`
+旧的 GMW / OT-hybrid 代码目前保留在仓库中作为过渡参考，但已经不再是当前主框架的一部分；
+后续会在新的 machine / protocol / composition 语义上重写。
 
 ## 如何构建
 
@@ -146,26 +127,19 @@ cd lean-crypto-protocols
 lake build
 ```
 
-如果只想单独检查 GMW：
+如果只想单独检查新的 UC 框架入口：
 
 ```bash
-lake build LeanCryptoProtocols.GMW.OTHybrid
-```
-
-如果只想单独检查审计入口：
-
-```bash
-lake build LeanCryptoProtocols.GMW.OTHybrid.Certificate
+lake build LeanCryptoProtocols.UC.Core
 ```
 
 ## 当前限制
 
-当前还没有实现：
+当前仍未覆盖：
 
-- 恶意敌手
-- 自适应腐化
-- 完整 Canetti 异步调度语义
-- real-world OT 协议与组合定理
-- 真实 PPT / negligible 上的完整计算安全实例证明
+- Canetti 后续章节中的更完整异步调度模型
+- adaptive corruption
+- malicious adversary
+- 在新框架上重写 GMW / OT / GC 等协议实例
 
-这些是后续工作。
+这些是后续阶段的工作。
