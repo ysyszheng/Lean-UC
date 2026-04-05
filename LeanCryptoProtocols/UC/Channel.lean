@@ -14,15 +14,9 @@ import LeanCryptoProtocols.UC.Machine
 这里先提供可复用的 machine 组件与最基本的正确性化简定理。
 -/
 
-universe u v
+universe u
 
 namespace LeanCryptoProtocols.UC
-
-/-- channel machine 的业务标签。 -/
-inductive ChannelLabel where
-  | send
-  | deliver
-  deriving Repr, DecidableEq, Inhabited
 
 /-- channel machine 的载荷：记录最终接收者以及消息体。 -/
 structure ChannelPayload (Payload : Type u) where
@@ -35,65 +29,56 @@ def mkDeliveredEnvelope
     {Payload : Type u}
     (chanId receiver : MachineId)
     (payload : Payload) :
-    Envelope ChannelLabel (ChannelPayload Payload) :=
-  { sender := ⟨chanId, .plain .deliver⟩
+    Envelope (ChannelPayload Payload) :=
+  { sender := ⟨chanId, .subroutineOutput⟩
     receiver := ⟨receiver, .input⟩
     payload := ⟨receiver, payload⟩ }
 
 /-- 最小的 authenticated communication channel program。 -/
 noncomputable def channelProgram {Payload : Type u} (chanId : MachineId) :
-    MachineProgram ChannelLabel (ChannelPayload Payload) PUnit where
+    MachineProgram (ChannelPayload Payload) PUnit where
   LocalState := Unit
   init := ()
   step _ msg :=
-    match msg.receiver.label with
-    | .plain .send =>
-        PMF.pure
-          ((), [mkDeliveredEnvelope chanId msg.payload.receiver msg.payload.body])
-    | _ => PMF.pure ((), [])
+    if msg.receiver = ⟨chanId, .input⟩ then
+      PMF.pure
+        { state := ()
+          outgoing? := some (mkDeliveredEnvelope chanId msg.payload.receiver msg.payload.body) }
+    else
+      PMF.pure { state := (), outgoing? := none }
   output _ := PUnit.unit
 
 /-- channel machine 的 communication set。 -/
-def channelCommSet (chanId : MachineId) : Finset (CommPort ChannelLabel) :=
-  { ⟨chanId, .plain .send⟩
-  , ⟨chanId, .plain .deliver⟩
+def channelCommSet (chanId : MachineId) : Finset CommPort :=
+  { ⟨chanId, .input⟩
+  , ⟨chanId, .subroutineOutput⟩
   , ⟨chanId, .backdoor⟩
   }
 
 /-- authenticated communication 对应的 channel machine。 -/
 noncomputable def channelMachine {Payload : Type u} (chanId : MachineId) :
-    Machine ChannelLabel (ChannelPayload Payload) PUnit where
+    Machine (ChannelPayload Payload) PUnit where
   id := chanId
   communicationSet := channelCommSet chanId
   program := channelProgram chanId
 
 @[simp] theorem channelProgram_send_step
     {Payload : Type u} (chanId : MachineId)
-    (msg : Envelope ChannelLabel (ChannelPayload Payload))
-    (hlabel : msg.receiver.label = .plain .send) :
+    (msg : Envelope (ChannelPayload Payload))
+    (hrecv : msg.receiver = ⟨chanId, .input⟩) :
     (channelProgram (Payload := Payload) chanId).step () msg =
-      PMF.pure ((), [mkDeliveredEnvelope chanId msg.payload.receiver msg.payload.body]) := by
-  simp [channelProgram, hlabel]
+      PMF.pure
+        { state := ()
+          outgoing? :=
+            some (mkDeliveredEnvelope chanId msg.payload.receiver msg.payload.body) } := by
+  simp [channelProgram, hrecv]
 
 @[simp] theorem channelProgram_non_send_step
     {Payload : Type u} (chanId : MachineId)
-    (msg : Envelope ChannelLabel (ChannelPayload Payload))
-    (hlabel : msg.receiver.label ≠ .plain .send) :
+    (msg : Envelope (ChannelPayload Payload))
+    (hrecv : msg.receiver ≠ ⟨chanId, .input⟩) :
     (channelProgram (Payload := Payload) chanId).step () msg =
-      PMF.pure ((), []) := by
-  cases h : msg.receiver.label with
-  | input =>
-      simp [channelProgram, h]
-  | subroutineOutput =>
-      simp [channelProgram, h]
-  | backdoor =>
-      simp [channelProgram, h]
-  | plain lbl =>
-      cases lbl with
-      | send =>
-          exfalso
-          exact hlabel h
-      | deliver =>
-          simp [channelProgram, h]
+      PMF.pure { state := (), outgoing? := none } := by
+  simp [channelProgram, hrecv]
 
 end LeanCryptoProtocols.UC

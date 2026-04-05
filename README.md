@@ -30,12 +30,24 @@
 - `PortLabel`
 - `CommPort`
 - `Envelope`
+- `ActivationResult`
 - `MachineProgram`
 - `Machine`
 - `ProtocolShape`
 - caller / subroutine 的 identity 关系
 
 这一层只描述协议的静态结构，不直接给出 UC 安全定义。
+
+其中 `PortLabel` 严格只有 Canetti 原文中的三类标准标签：
+
+- `input`
+- `subroutineOutput`
+- `backdoor`
+
+并且 `MachineProgram` 现在遵守 Section 2 的原子语义：
+
+- 一次激活至多发送一条消息
+- 不发送消息时用 `Option.none` 表示挂起
 
 ### 2. Indistinguishability
 
@@ -48,8 +60,10 @@
 - `PerfectIndist`
 - `StatisticalIndist`
 - `ComputationalIndist`
+- `TVDist`
+- `PPT`
 - `Negligible`
-- `Advantage`
+- `DistAdvantage`
 
 以及基础闭包引理，例如：
 
@@ -58,6 +72,17 @@
 - `Perfect → Computational`
 - `Negligible.add`
 - `Negligible.const_mul`
+
+并提供数学记号：
+
+- `X ≡ Y`
+- `X ≈ₛ Y`
+- `X ≈_c Y`
+
+其中：
+
+- `≈ₛ` 通过全变差距离定义
+- `≈_c` 通过全局 `PPT` 谓词约束下的 distinguisher 定义
 
 ### 3. Security
 
@@ -107,6 +132,12 @@ UC-emulate 它的理想版本，那么在满足 compatible / identity-compatible
 - `LeanCryptoProtocols/UC/Channel.lean`
 
 提供最小的 authenticated communication `channel machine` 组件。
+
+这个 channel machine 不再依赖额外端口标签，而是：
+
+- 统一从 channel 自己的 `input` 端口接收消息
+- 统一从 channel 自己的 `subroutineOutput` 端口发出转发消息
+- 用 payload 中携带的接收者 identity 做路由
 
 ## 其他现有模块
 
