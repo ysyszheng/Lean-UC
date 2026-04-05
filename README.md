@@ -12,7 +12,7 @@
 - `n` 方协议
 - static corruption
 - semi-honest 敌手
-- authenticated communication
+- 同步加密授权通信
 - 完美 / 统计 / 计算 三层不可区分
 - universal composition theorem
 
@@ -124,20 +124,6 @@
 `universalComposition` 是当前框架中的主定理：如果一个 subroutine protocol
 UC-emulate 它的理想版本，那么在满足 compatible / identity-compatible
 以及组合语义约化条件时，把它替换进任意宿主协议后，整体协议仍保持相同安全级别的 UC-emulation。
-
-### 5. Authenticated Communication
-
-文件：
-
-- `LeanCryptoProtocols/UC/Channel.lean`
-
-提供最小的 authenticated communication `channel machine` 组件。
-
-这个 channel machine 不再依赖额外端口标签，而是：
-
-- 统一从 channel 自己的 `input` 端口接收消息
-- 统一从 channel 自己的 `subroutineOutput` 端口发出转发消息
-- 用 payload 中携带的接收者 identity 做路由
 
 ## 其他现有模块
 

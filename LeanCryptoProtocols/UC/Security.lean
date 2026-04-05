@@ -17,7 +17,7 @@ import LeanCryptoProtocols.UC.Indistinguishability
 
 - static corruption；
 - semi-honest；
-- authenticated communication。
+- 同步加密授权通信。
 -/
 
 universe u
