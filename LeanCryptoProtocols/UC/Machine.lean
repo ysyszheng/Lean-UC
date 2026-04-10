@@ -39,10 +39,11 @@ structure CommPort where
   owner : MachineId -- 端口所属的 machine identity
   dest : MachineId -- 端口连接的另一端的 machine identity
   label : PortLabel -- owner 给 dest 发送的消息类型
-  -- 约束：owner 和 dest 不能相同，且 label 是 backdoor 时则 owner 和 dest 之一是敌手
-  WellFormed :
+  -- 约束：owner 和 dest 不能相同，且 label 是 backdoor 时 <=> owner 和 dest 之一是敌手
+  wellFormed :
     owner ≠ dest ∧
-    (label ≠ .backdoor ∨ owner = advId ∨ dest = advId)
+    (label ≠ .backdoor → (owner ≠ advId ∧ dest ≠ advId)) ∧
+    (label = .backdoor → (owner = advId ∨ dest = advId))
   deriving Repr, DecidableEq
 
 /-- 在 machine 之间路由的消息。 -/
@@ -51,7 +52,7 @@ structure Envelope (Payload : Type u) where
   receiver : CommPort
   payload : Payload
   -- 约束：sender 和 receiver 的 owner/dest 匹配，且 sender 是 input port 则 receiver 是 subroutineOutput 端口；sender 是 subroutineOutput 端口则 receiver 是 input 端口；sender 是 backdoor 端口则 receiver 是 backdoor 端口。
-  WellFormed :
+  wellFormed :
     (sender.label = .input ∧ receiver.label = .subroutineOutput) ∨
     (sender.label = .subroutineOutput ∧ receiver.label = .input) ∨
     (sender.label = .backdoor ∧ receiver.label = .backdoor) ∧
@@ -88,7 +89,7 @@ structure Machine (Payload : Type u) (Out : Type v) where
   communicationSet : Finset CommPort
   program : MachineProgram Payload Out
   -- 约束：communicationSet 中每一个端口的 owner 都是 id，且不同端口的 dest 不同，还需要没有冗余的端口，这点 Finset 会自动去重
-  WellFormed :
+  wellFormed :
     (∀ p ∈ communicationSet, p.owner = id) ∧
     (∀ p1 ∈ communicationSet, ∀ p2 ∈ communicationSet, p1.dest = p2.dest → p1 = p2)
 
