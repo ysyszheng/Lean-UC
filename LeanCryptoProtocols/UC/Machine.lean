@@ -42,8 +42,7 @@ structure CommPort where
   -- 约束：owner 和 dest 不能相同，且 label 是 backdoor 时 <=> owner 和 dest 之一是敌手
   wellFormed :
     owner ≠ dest ∧
-    (label ≠ .backdoor → (owner ≠ advId ∧ dest ≠ advId)) ∧
-    (label = .backdoor → (owner = advId ∨ dest = advId))
+    (label = .backdoor ↔ (owner = advId ∨ dest = advId))
   deriving Repr, DecidableEq
 
 /-- 在 machine 之间路由的消息。 -/
