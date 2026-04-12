@@ -19,5 +19,6 @@ import LeanCryptoProtocols.UC.Composition
 - static corruption；
 - semi-honest；
 - 同步加密授权通信；
+- uniform：只保留安全参数 `n`，不建模额外辅助输入；
 - 以 Canetti 2000 第 2 节的简化模型为蓝本。
 -/

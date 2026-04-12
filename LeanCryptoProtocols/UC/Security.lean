@@ -1,237 +1,203 @@
-import LeanCryptoProtocols.UC.Machine
-import LeanCryptoProtocols.UC.Indistinguishability
+import LeanCryptoProtocols.UC.Controller
 
 /-!
-# UC-emulate / ideal protocol / UC-realize
+# UC-emulate / ideal functionality / UC-realize
 
-本文件在 `Machine.lean` 的静态语法之上加入：
+本文件建立在 `Machine.lean` 与 `Controller.lean` 之上，给出：
 
-- environment；
-- adversary / simulator；
-- executable protocol；
-- ideal functionality / dummy party / ideal protocol；
+TODO: 拆分成两个文件，分别处理理想功能和UC-emulate/realize
+
+- 理想功能；
+- dummy party；
+- 从理想功能自动生成 ideal protocol 的构造接口；
 - UC-emulate；
 - UC-realize。
 
-这里的框架固定在 Section 2 的简化 setting：
-
-- static corruption；
-- semi-honest；
-- 同步加密授权通信；
-- uniform：不建模 environment 的额外辅助输入，只保留安全参数 `n`。
-
-按 Canetti 第 2.2.2 节的组织：
-
-- ideal functionality 只是一个 machine；
-- ideal protocol 是由若干 dummy parties 与 ideal functionality 组成的协议。
+这里固定采用 uniform 的 restricted model：不显式建模额外辅助输入，只保留安全参数 `n`。
 -/
 
 universe u
 
 namespace LeanCryptoProtocols.UC
 
-/-- 环境本身也是一个 machine。 -/
-structure Environment (Payload : Type u) where
-  machine : Machine Payload Bool
-  id_matches : machine.id = envId
-  -- 约束：环境能和敌手通信
-  canCommunicateWithAdversary :
-    ∃ m ∈ machine.communicationSet, m.dest = advId
-
-/--
-半诚实、静态腐化敌手。
-
-这里不再给敌手开放主动篡改 honest program 的接口；它只携带：
-
-- 一个 adversary machine；
-- 初始腐化集合。
--/
-structure Adversary (Payload : Type u) where
-  machine : Machine Payload PUnit
-  corruptionSet : Finset MachineId
-  id_matches : machine.id = advId
-  -- 约束：adversary 只能给 corruptionSet 中的 machine 以及环境发送/接收 backdoor 消息
-  -- m.label = .backdoor 的约束已经隐含在 CommPort 的 WellFormed 里了
-  backdoorOnlyToCorrupted :
-    (∀ p ∈ machine.communicationSet → (p.dest ∈ corruptionSet ∪ {envId})) ∧
-      (∀ m ∈ corruptionSet ∪ {envId}, ∃ p ∈ machine.communicationSet, p.dest = m)
-
-/-- simulator 在 Section 2 的理想世界中扮演 adversary 的角色。 -/
-abbrev Simulator (Payload : Type u) := Adversary Payload
-
-/-- 可执行协议：协议 + 敌手 + 环境。 -/
-structure ExecutableProtocol (Payload : Type u)
-    extends ProtocolShape Payload where
-  adversary : Adversary Payload
-  environment : Environment Payload
-  exec :
-    ℕ →
-    PMF Bool -- TODO: 放到controller里面
-  -- 约束：环境除了和敌手通信之外，只能和协议中的 main machine 发送input。
-  env_communication_constraints :
-    ∀ m ∈ env.machine.communicationSet,
-      m.dest ≠ advId →
-        (toProtocolShape.IsMainMachine m.dest ∧ m.label = .input)
-  -- 约束：敌手的 corruptionSet 必须是协议中 machine identity 的子集。
-  adversary_corruption_constraints :
-    adversary.corruptionSet ⊆ toProtocolShape.machineIds.toFinset
-  -- 约束：敌手的 corruptionSet 中的 machine 能和敌手通信。
-  communication_with_adversary :
-    ∀ m ∈ toProtocolShape.machines, m.id ∈ adversary.corruptionSet →
-      ∃ p ∈ m.communicationSet, p.dest = advId
-
-/-- `exec_{π,A,E}` 诱导出的输出 ensemble。 -/
-def ExecEnsemble {Payload : Type u}
-    (π : ExecutableProtocol Payload)
-    (A : Adversary Payload)
-    (E : Environment Payload) : Ensemble Bool :=
-  fun n => π.exec A E n
-
-/-- 真实协议与理想协议在固定 `A,S,E,n` 下的执行差。 -/
-noncomputable def ExecDiff {Payload : Type u}
-    (π φ : ExecutableProtocol Payload)
-    (A : Adversary Payload)
-    (S : Simulator Payload)
-    (E : Environment Payload)
-    (n : ℕ) : ℝ :=
-  |probTrue (π.exec A E n) - probTrue (φ.exec S E n)|
-
 /--
 理想功能对象。
 
-按 Canetti 原文，ideal functionality 本身只是一个 machine。
+按 Canetti 原文，理想功能本身只是一个 machine；但为了能自动构造 dummy parties，
+这里额外记录：
+
+- 参与方 identities；
+- 每个参与方对应的 external identities；
+- 如何把环境输入包装成送给功能机的 payload；
+- 如何把功能机返回的 payload 解析成目标 identity 与外发 payload。
 -/
 structure IdealFunctionality (Payload : Type u) where
-  dummyPartyCount : ℕ
-  machine : Machine Payload PUnit
-  functionalityId : MachineId
-  id_matches : machine.2.id = functionalityId
-
--- TODO：从IdealFunctionality make ideal protocol，构造dummyPartyCount个dummy parties，program就是转发消息（给环境可以吗）
+  party_ids : List MachineId
+  functionality_id : MachineId
+  machine : Machine Payload Unit
+  id_matches : machine.id = functionality_id
+  party_ids_nodup : party_ids.Nodup
+  parties_separated : env_id ∉ party_ids ∧ adv_id ∉ party_ids
+  functionality_separated : functionality_id ≠ env_id ∧ functionality_id ≠ adv_id
+  functionality_not_party : functionality_id ∉ party_ids
+  party_external_ids : MachineId → Finset MachineId
+  external_ids_nonempty :
+    ∀ pid ∈ party_ids, (party_external_ids pid).Nonempty
+  external_ids_outside_parties :
+    ∀ pid ∈ party_ids, ∀ ext ∈ party_external_ids pid, ext ∉ party_ids
+  external_ids_separated :
+    ∀ pid ∈ party_ids, ∀ ext ∈ party_external_ids pid,
+      ext ≠ functionality_id ∧ ext ≠ env_id ∧ ext ≠ adv_id
+  wrap_input : Option MachineId → Payload → Payload
+  unwrap_output : Payload → Option (MachineId × Payload)
+  functionality_ports_to_parties :
+    ∀ pid ∈ party_ids,
+      ∃ p ∈ machine.communication_set, p.dest = pid ∧ p.label = .subroutineOutput
+  functionality_comm_constraints :
+    ∀ p ∈ machine.communication_set,
+      p.dest ∈ party_ids.toFinset ∧ p.label = .subroutineOutput
+  -- TODO: functionality还可以和敌手通信。这个是在构造ExecutionSetup时通过给敌手的corruptionSet加入functionality的ID，后续调用runtime_communication_set动态实现吗
 
 /--
 dummy party。
 
-这一层显式记录 dummy party 的 identity、其对应的 ideal functionality identity，
-以及它应满足的最小语义约束：
-
-- 收到输入后转发给功能机；
-- 收到功能机的输出后转发给目标 identity；
-- 忽略 backdoor 信息。
+这是 `mk_dummy_party` 的审计输出对象，而不是协议设计者需要手写的主入口。
 -/
 structure DummyParty (Payload : Type u) where
-  machine : Machine Payload PUnit
-  partyId : MachineId
-  id_matches : machine.id = partyId
-  -- 约束：dummy party 只不能和敌手直接通信。还有一些涉及协议的约束放在idealProtocol中。
-  noBackdoor :
-    ∀ m ∈ machine.communicationSet, m.label = .backdoor → False
+  party_id : MachineId
+  functionality_id : MachineId
+  external_ids : Finset MachineId
+  machine : Machine Payload Unit
+  id_matches : machine.id = party_id
+  no_backdoor :
+    ∀ p ∈ machine.communication_set, p.label = .backdoor → False
+  input_port_present :
+    ∃ p ∈ machine.communication_set, p.dest = functionality_id ∧ p.label = .input
+  external_ports_complete :
+    ∀ ext ∈ external_ids,
+      ∃ p ∈ machine.communication_set, p.dest = ext ∧ p.label = .subroutineOutput
+  communication_constraints :
+    ∀ p ∈ machine.communication_set,
+      (p.dest = functionality_id ∧ p.label = .input) ∨
+        (p.dest ∈ external_ids ∧ p.label = .subroutineOutput)
 
-/-- 将 dummy party 打包成异质 machine。 -/
-def DummyParty.toAnyMachine {Payload : Type u} (d : DummyParty Payload) : AnyMachine Payload :=
-  ⟨PUnit, d.machine⟩
+/-- 把 dummy party 打包成异质 machine。 -/
+def DummyParty.to_any_machine {Payload : Type u} (d : DummyParty Payload) : AnyMachine Payload :=
+  ⟨Unit, d.machine⟩
+
+/-- 从理想功能自动生成一个 dummy party。 -/
+-- TODO: 这个和下面的总共3个axiom有什么用？没有定义如何构造的过程，也没有指明DummyParty的 machine的program只是做转发的功能
+axiom mk_dummy_party {Payload : Type u}
+    (f : IdealFunctionality Payload) (party_id : MachineId)
+    (h_party : party_id ∈ f.party_ids) : DummyParty Payload
 
 /--
 ideal protocol。
 
-按 Canetti 原文，它由：
-
-- 若干 dummy parties；
-- 一个 ideal functionality machine；
-
-共同组成。其 main machines 是 dummy parties，而功能机本身是 internal machine。
+它由若干 dummy parties 与一个理想功能机组成；这里显式暴露这三部分，
+便于后续审计。
 -/
-structure IdealProtocol (Payload : Type u)
-    extends ExecutableProtocol Payload where
+structure IdealProtocol (Payload : Type u) where
+  protocol : ProtocolShape Payload
   functionality : IdealFunctionality Payload
-  dummyParties : List (DummyParty Payload)
-  parties_count :
-    dummyParties.length = functionality.dummyPartyCount
+  dummy_parties : List (DummyParty Payload)
   machines_eq :
-    toExecutableProtocol.toProtocolShape.machines =
-      dummyParties.map DummyParty.toAnyMachine ++ [functionality.machine]
-  -- DummyParty 的通信约束：input 消息只能向功能机发送，dummy party 之间不能直接通信。
-  dummy_communication_constraints :
-    ∀ d ∈ dummyParties, ∀ p ∈ d.machine.communicationSet,
-      (p.dest ∉ (dummyParties.map DummyParty.partyId).toFinset) ∧
-      (p.label = PortLabel.input ↔ p.dest = functionality.functionalityId)
-  -- ideal functionality 的通信约束：功能机只能给 dummy party 发送 subroutineOutput 消息，或者给敌手发送 backdoor 消息。
-  functionality_communication_constraints :
-    ∀ p ∈ functionality.machine.communicationSet,
-      (p.dest ∈ (dummyParties.map DummyParty.partyId).toFinset ∧ p.label = PortLabel.subroutineOutput) ∨
-      (p.dest = advId ∧ p.label = PortLabel.backdoor)
-  dummy_are_main :
-    ∀ d ∈ dummyParties,
-      toExecutableProtocol.toProtocolShape.IsMainMachine d.partyId
-  functionality_is_internal :
-    toExecutableProtocol.toProtocolShape.IsInternalMachine functionality.functionalityId
+    protocol.machines =
+      dummy_parties.map DummyParty.to_any_machine ++ [⟨Unit, functionality.machine⟩]
 
-/-- ideal protocol 中 dummy party identities 的集合。 -/
-def IdealProtocol.dummyPartyIds {Payload : Type u}
-    (Φ : IdealProtocol Payload) : Finset MachineId :=
-  (Φ.dummyParties.map DummyParty.partyId).toFinset
+/-- 从理想功能的参与方列表自动生成所有 dummy parties。 -/
+axiom mk_dummy_parties {Payload : Type u}
+    (f : IdealFunctionality Payload) : List (DummyParty Payload)
+
+/--
+从理想功能自动生成 ideal protocol。
+
+这里把 proof-heavy 的 protocol-shape 组装集中放在一个构造器里，供 `UCRealizesAt`
+复用。
+-/
+axiom mk_ideal_protocol {Payload : Type u} :
+  IdealFunctionality Payload → IdealProtocol Payload
+
+/-- 真实世界与理想世界在固定 `A,S,E,n` 下的执行差。 -/
+noncomputable def exec_diff {Payload : Type u}
+    {π φ : ProtocolShape Payload}
+    {A : Adversary Payload}
+    {S : Simulator Payload}
+    {E : Environment Payload}
+    (real_setup : ExecutionSetup π A E)
+    (ideal_setup : ExecutionSetup φ S E)
+    (n : ℕ) : ℝ :=
+  |probTrue (Controller.exec real_setup n) - probTrue (Controller.exec ideal_setup n)|
 
 /--
 UC-emulate：对任意 adversary，都存在 simulator，使得对任意 environment，
 真实协议与目标协议的环境输出满足 restricted-model 的不可区分要求。
 
-这里只有计算层要求 `PPT`。
+这里把依赖 `protocol + adversary + environment` 的合法性检查显式编码进
+`ExecutionSetup` 参数。
 -/
 def UCEmulatesAt {Payload : Type u}
     (level : SecurityLevel)
-    (π φ : ExecutableProtocol Payload) : Prop :=
+    (π φ : ProtocolShape Payload) : Prop :=
   match level with
   | .perfect =>
       ∀ A : Adversary Payload, ∃ S : Simulator Payload,
-        ∀ E : Environment Payload, ∀ n,
-          π.exec A E n = φ.exec S E n
+        ∀ E : Environment Payload,
+          ∀ real_setup : ExecutionSetup π A E, -- TODO: 这里为什么要 forall？ExecutionSetup π A E应该是根据π A E自动得出的
+            ∀ ideal_setup : ExecutionSetup φ S E,
+              ∀ n, Controller.exec real_setup n = Controller.exec ideal_setup n
   | .statistical =>
       ∀ A : Adversary Payload, ∃ S : Simulator Payload,
         ∀ E : Environment Payload,
-          ∃ negl, Negligible negl ∧ ∀ n, ExecDiff π φ A S E n ≤ negl n
+          ∀ real_setup : ExecutionSetup π A E,
+            ∀ ideal_setup : ExecutionSetup φ S E,
+              ∃ negl, Negligible negl ∧
+                ∀ n, exec_diff real_setup ideal_setup n ≤ negl n
   | .computational =>
       ∀ A : Adversary Payload, PPT A →
         ∃ S : Simulator Payload, PPT S ∧
           ∀ E : Environment Payload, PPT E →
-            ∃ negl, Negligible negl ∧ ∀ n, ExecDiff π φ A S E n ≤ negl n
+            ∀ real_setup : ExecutionSetup π A E,
+              ∀ ideal_setup : ExecutionSetup φ S E,
+                ∃ negl, Negligible negl ∧
+                  ∀ n, exec_diff real_setup ideal_setup n ≤ negl n
 
 /-- 常用简写。 -/
 def UCEmulatesPerfect {Payload : Type u}
-    (π φ : ExecutableProtocol Payload) : Prop :=
+    (π φ : ProtocolShape Payload) : Prop :=
   UCEmulatesAt .perfect π φ
 
 def UCEmulatesStatistical {Payload : Type u}
-    (π φ : ExecutableProtocol Payload) : Prop :=
+    (π φ : ProtocolShape Payload) : Prop :=
   UCEmulatesAt .statistical π φ
 
 def UCEmulatesComputational {Payload : Type u}
-    (π φ : ExecutableProtocol Payload) : Prop :=
+    (π φ : ProtocolShape Payload) : Prop :=
   UCEmulatesAt .computational π φ
 
 /--
-UC-realize：协议 `π` UC-emulate 一个理想协议 `Φ`。
--- TODO：换成从IdealFunctionality make ideal protocol
+UC-realize：协议 `π` UC-emulate 从 `F` 自动构造出的 ideal protocol。
 -/
 def UCRealizesAt {Payload : Type u}
     (level : SecurityLevel)
-    (π : ExecutableProtocol Payload)
-    (Φ : IdealProtocol Payload) : Prop :=
-  UCEmulatesAt level π Φ.toExecutableProtocol
+    (π : ProtocolShape Payload)
+    (f : IdealFunctionality Payload) : Prop :=
+  UCEmulatesAt level π (mk_ideal_protocol f).protocol
 
 /-- 常用简写。 -/
 def UCRealizesPerfect {Payload : Type u}
-    (π : ExecutableProtocol Payload)
-    (Φ : IdealProtocol Payload) : Prop :=
-  UCRealizesAt .perfect π Φ
+    (π : ProtocolShape Payload)
+    (f : IdealFunctionality Payload) : Prop :=
+  UCRealizesAt .perfect π f
 
 def UCRealizesStatistical {Payload : Type u}
-    (π : ExecutableProtocol Payload)
-    (Φ : IdealProtocol Payload) : Prop :=
-  UCRealizesAt .statistical π Φ
+    (π : ProtocolShape Payload)
+    (f : IdealFunctionality Payload) : Prop :=
+  UCRealizesAt .statistical π f
 
 def UCRealizesComputational {Payload : Type u}
-    (π : ExecutableProtocol Payload)
-    (Φ : IdealProtocol Payload) : Prop :=
-  UCRealizesAt .computational π Φ
+    (π : ProtocolShape Payload)
+    (f : IdealFunctionality Payload) : Prop :=
+  UCRealizesAt .computational π f
 
 end LeanCryptoProtocols.UC

@@ -22,10 +22,10 @@ namespace LeanCryptoProtocols.UC
 abbrev MachineId : Type := Nat
 
 /-- 环境的固定身份。 -/
-def envId : MachineId := 0
+def env_id : MachineId := 0
 
 /-- 敌手的固定身份。 -/
-def advId : MachineId := 1
+def adv_id : MachineId := 1
 
 /-- communication set 中的标准消息类型标签。 -/
 inductive PortLabel where
@@ -34,31 +34,31 @@ inductive PortLabel where
   | backdoor
   deriving Repr, DecidableEq, Inhabited
 
-/-- 一个端口由该端口两端的 machine identity 和标签组成。 -/
+/-- 一个端口由发送者 identity、接收者 identity 和标签组成。 -/
 structure CommPort where
-  owner : MachineId -- 端口所属的 machine identity
-  dest : MachineId -- 端口连接的另一端的 machine identity
-  label : PortLabel -- owner 给 dest 发送的消息类型
-  -- 约束：owner 和 dest 不能相同，且 label 是 backdoor 时 <=> owner 和 dest 之一是敌手
-  wellFormed :
+  owner : MachineId
+  dest : MachineId
+  label : PortLabel
+  well_formed :
     owner ≠ dest ∧
-    (label = .backdoor ↔ (owner = advId ∨ dest = advId))
+      (label = .backdoor ↔ (owner = adv_id ∨ dest = adv_id))
   deriving Repr, DecidableEq
 
-/-- 在 machine 之间路由的消息。 -/
-structure Envelope (Payload : Type u) where
-  sender : CommPort
-  receiver : CommPort
+/-- 机器发送的消息内容。 -/
+structure Message (Payload : Type u) where
+  source : Option MachineId
+  label : PortLabel
   payload : Payload
-  -- 约束：sender 和 receiver 的 owner/dest 匹配，且 sender 是 input port 则 receiver 是 subroutineOutput 端口；sender 是 subroutineOutput 端口则 receiver 是 input 端口；sender 是 backdoor 端口则 receiver 是 backdoor 端口。
-  wellFormed :
-    (sender.label = .input ∧ receiver.label = .subroutineOutput) ∨
-    (sender.label = .subroutineOutput ∧ receiver.label = .input) ∨
-    (sender.label = .backdoor ∧ receiver.label = .backdoor) ∧
-    sender.owner = receiver.dest ∧ sender.dest = receiver.owner
   deriving Repr, DecidableEq
 
-/-- 一次原子激活后的结果：更新状态，并至多发送一条消息。 -/
+/-- 发送给某个端口的一条消息。 -/
+structure Envelope (Payload : Type u) where
+  port : CommPort
+  message : Message Payload
+  label_matches : port.label = message.label
+  deriving Repr, DecidableEq
+
+/-- 一次原子恢复执行后的结果：更新状态，并至多发送一条消息。 -/
 structure ActivationResult (Payload : Type u) (State : Type v) where
   state : State
   outgoing? : Option (Envelope Payload)
@@ -70,147 +70,193 @@ machine 的局部程序。
 这里把局部状态类型封装在程序对象里；协议建模者需要写的是：
 
 - 初始状态；
-- 收到一条消息后的状态更新与至多一条待发送消息；
+- 收到一条消息后如何把消息写入本地状态；
+- 当前恢复执行时如何运行到“发送一条消息或挂起”为止；
+- 是否已经 halt；
 - 局部输出提取函数。
 -/
 structure MachineProgram (Payload : Type u) (Out : Type v) where
   LocalState : Type v
   init : LocalState
-  step :
-    LocalState →
-    Envelope Payload →
-    PMF (ActivationResult Payload LocalState)
+  receive : LocalState → Envelope Payload → LocalState -- TODO: 这里不应该拿到Envelope Payload，而是只能拿到Message Payload（即不能看到发送的端口信息）
+  resume : LocalState → PMF (ActivationResult Payload LocalState)
+  is_halted : LocalState → Bool
   output : LocalState → Out
 
 /-- 一个 machine 由身份、communication set 和局部程序组成。 -/
 structure Machine (Payload : Type u) (Out : Type v) where
   id : MachineId
-  communicationSet : Finset CommPort
+  communication_set : Finset CommPort
   program : MachineProgram Payload Out
-  -- 约束：communicationSet 中每一个端口的 owner 都是 id，且不同端口的 dest 不同，还需要没有冗余的端口，这点 Finset 会自动去重
-  wellFormed :
-    (∀ p ∈ communicationSet, p.owner = id) ∧
-    (∀ p1 ∈ communicationSet, ∀ p2 ∈ communicationSet, p1.dest = p2.dest → p1 = p2)
+  well_formed :
+    (∀ p ∈ communication_set, p.owner = id) ∧
+      (∀ p₁ ∈ communication_set, ∀ p₂ ∈ communication_set, p₁.dest = p₂.dest → p₁ = p₂)
 
 /-- 抹去输出类型后的 machine。 -/
-abbrev AnyMachine (Payload : Type u) :=
-  Σ Out : Type, Machine Payload Out
+abbrev AnyMachine (Payload : Type u) := Σ Out : Type, Machine Payload Out
 
-/-- 从异质机器中抽取 identity。 -/
+/-- 从异质 machine 中抽取 identity。 -/
 def AnyMachine.id {Payload : Type u} (m : AnyMachine Payload) : MachineId :=
   m.2.id
 
 /-- 抽取 protocol 中所有 machine identity。 -/
-def machineIds {Payload : Type u}
-    (machines : List (AnyMachine Payload)) : List MachineId :=
+def machine_ids {Payload : Type u} (machines : List (AnyMachine Payload)) : List MachineId :=
   machines.map AnyMachine.id
 
-/-- machine 是否允许向某个 identity 的发送 `input` 消息。 -/
-def CanSendInputTo {Payload : Type u} {Out : Type v}
-    (μ : Machine Payload Out) (id : MachineId) : Prop :=
-  ∃ p ∈ μ.communicationSet, p.dest = id ∧ p.label = PortLabel.input
+/-- 构造一个普通 `input` 端口。 -/
+def mk_input_port (owner dest : MachineId) (hne : owner ≠ dest)
+    (h_owner : owner ≠ adv_id) (h_dest : dest ≠ adv_id) : CommPort where
+  owner := owner
+  dest := dest
+  label := .input
+  well_formed := by
+    refine ⟨hne, ?_⟩
+    simp [h_owner, h_dest]
 
-/-- machine 是否允许向某个 identity 发送 `subroutineOutput` 消息。 -/
-def CanSendSubroutineOutputTo {Payload : Type u} {Out : Type v}
-    (μ : Machine Payload Out) (id : MachineId) : Prop :=
-  ∃ p ∈ μ.communicationSet, p.dest = id ∧ p.label = PortLabel.subroutineOutput
+/-- 构造一个普通 `subroutine-output` 端口。 -/
+def mk_subroutine_output_port (owner dest : MachineId) (hne : owner ≠ dest)
+    (h_owner : owner ≠ adv_id) (h_dest : dest ≠ adv_id) : CommPort where
+  owner := owner
+  dest := dest
+  label := .subroutineOutput
+  well_formed := by
+    refine ⟨hne, ?_⟩
+    simp [h_owner, h_dest]
+
+/-- 构造一个 `backdoor` 端口。 -/
+def mk_backdoor_port (owner dest : MachineId) (hne : owner ≠ dest)
+    (hadv : owner = adv_id ∨ dest = adv_id) : CommPort where
+  owner := owner
+  dest := dest
+  label := .backdoor
+  well_formed := by
+    refine ⟨hne, ?_⟩
+    simp [hadv]
+
+/-- machine 是否允许向某个 identity 发送 `input` 消息。 -/
+def can_send_input_to {Payload : Type u} {Out : Type v}
+    (μ : Machine Payload Out) (mid : MachineId) : Prop :=
+  ∃ p ∈ μ.communication_set, p.dest = mid ∧ p.label = .input
+
+/-- machine 是否允许向某个 identity 发送 `subroutine-output` 消息。 -/
+def can_send_subroutine_output_to {Payload : Type u} {Out : Type v}
+    (μ : Machine Payload Out) (mid : MachineId) : Prop :=
+  ∃ p ∈ μ.communication_set, p.dest = mid ∧ p.label = .subroutineOutput
 
 /-- machine 是否允许向某个 identity 发送 `backdoor` 消息。 -/
-def CanSendBackdoorTo {Payload : Type u} {Out : Type v}
-    (μ : Machine Payload Out) (id : MachineId) : Prop :=
-  ∃ p ∈ μ.communicationSet, p.dest = id ∧ p.label = PortLabel.backdoor
+def can_send_backdoor_to {Payload : Type u} {Out : Type v}
+    (μ : Machine Payload Out) (mid : MachineId) : Prop :=
+  ∃ p ∈ μ.communication_set, p.dest = mid ∧ p.label = .backdoor
 
 /-- 若 `μ` 能向 `id` 发送 `input` 消息，则称 `μ` 是 `id` 的 caller。 -/
-def IsCallerOfId {Payload : Type u} {Out : Type v}
-    (μ : Machine Payload Out) (id : MachineId) : Prop :=
-  CanSendInputTo μ id
+def is_caller_of_id {Payload : Type u} {Out : Type v}
+    (μ : Machine Payload Out) (mid : MachineId) : Prop :=
+  can_send_input_to μ mid
 
-/-- 若 `μ` 能向 `id` 发送 `subroutineOutput` 消息，则称 `μ` 是 `id` 的 subroutine。 -/
-def IsSubroutineOfId {Payload : Type u} {Out : Type v}
-    (μ : Machine Payload Out) (id : MachineId) : Prop :=
-  CanSendSubroutineOutputTo μ id
+/-- 若 `μ` 能向 `id` 发送 `subroutine-output` 消息，则称 `μ` 是 `id` 的 subroutine。 -/
+def is_subroutine_of_id {Payload : Type u} {Out : Type v}
+    (μ : Machine Payload Out) (mid : MachineId) : Prop :=
+  can_send_subroutine_output_to μ mid
 
 /--
 protocol 的静态外形。
-
+TODO: ProtocolShape改结构体名为Protocol？
 本项目在这一层只记录 Section 2 里对 protocol shape 必需的静态约束；
-真正的执行分布在 `Security.lean` 中由 `ExecutableProtocol` 给出。
+真正的执行分布在 `Security.lean` 中经由 controller 给出。
 -/
 structure ProtocolShape (Payload : Type u) where
   machines : List (AnyMachine Payload)
-  -- 下面是一些静态约束，确保 Protocol 是 well-formed 的：
-  uniqueIds : (machineIds machines).Nodup
-  callerHasMatchingSubroutine :
-    ∀ m ∈ machines, ∀ id : MachineId,
-      IsCallerOfId m.2 id →
-      ∃ m' ∈ machines, AnyMachine.id m' = id ∧ IsSubroutineOfId m'.2 (AnyMachine.id m)
-  subroutineHasMatchingCaller :
-    ∀ m ∈ machines, ∀ id : MachineId,
-      IsSubroutineOfId m.2 id →
-      id ∈ machineIds machines → -- id还可能是external identity（例如环境），这里不要求它们在protocol里有machine。见Canetti 2000 Page 11.
-      ∃ m' ∈ machines, AnyMachine.id m' = id ∧ IsCallerOfId m'.2 (AnyMachine.id m)
-  envSeparated : envId ∉ machineIds machines
-  advSeparated : advId ∉ machineIds machines
+  unique_ids : (machine_ids machines).Nodup
+  caller_has_matching_subroutine :
+    ∀ m ∈ machines, ∀ mid : MachineId,
+      is_caller_of_id m.2 mid →
+        ∃ m' ∈ machines, AnyMachine.id m' = mid ∧ is_subroutine_of_id m'.2 (AnyMachine.id m)
+  subroutine_has_matching_caller :
+    ∀ m ∈ machines, ∀ mid : MachineId,
+      is_subroutine_of_id m.2 mid →
+        mid ∈ machine_ids machines →
+        ∃ m' ∈ machines, AnyMachine.id m' = mid ∧ is_caller_of_id m'.2 (AnyMachine.id m)
+  env_separated : env_id ∉ machine_ids machines
+  adv_separated : adv_id ∉ machine_ids machines
 
 /-- protocol 中是否存在某个给定 identity 的 machine。 -/
-def ProtocolShape.HasMachineId {Payload : Type u}
+def ProtocolShape.has_machine_id {Payload : Type u}
     (π : ProtocolShape Payload) (mid : MachineId) : Prop :=
-  mid ∈ machineIds π.machines
+  mid ∈ machine_ids π.machines
+
+/-- 查找某个 identity 对应的 machine。 -/
+def ProtocolShape.machine_by_id? {Payload : Type u}
+    (π : ProtocolShape Payload) (mid : MachineId) : Option (AnyMachine Payload) :=
+  π.machines.find? (fun m => AnyMachine.id m = mid)
 
 /-- protocol 中 `parent` 是否拥有一个 id 为 `child` 的直接 subroutine。 -/
-def ProtocolShape.MachineIsSubroutineOf {Payload : Type u}
+def ProtocolShape.machine_is_subroutine_of {Payload : Type u}
     (π : ProtocolShape Payload) (child parent : MachineId) : Prop :=
-  ∃ mChild ∈ π.machines, ∃ mParent ∈ π.machines,
-    AnyMachine.id mChild = child ∧
-    AnyMachine.id mParent = parent ∧
-    IsSubroutineOfId mChild.2 parent
+  ∃ m_child ∈ π.machines, ∃ m_parent ∈ π.machines,
+    AnyMachine.id m_child = child ∧
+      AnyMachine.id m_parent = parent ∧
+      is_subroutine_of_id m_child.2 parent
 
 /-- protocol 中 `parent` 是否是 id 为 `child` 的 machine 的直接 caller。 -/
-def ProtocolShape.MachineIsCallerOf {Payload : Type u}
+def ProtocolShape.machine_is_caller_of {Payload : Type u}
     (π : ProtocolShape Payload) (parent child : MachineId) : Prop :=
-  ∃ mParent ∈ π.machines, ∃ mChild ∈ π.machines,
-    AnyMachine.id mParent = parent ∧
-    AnyMachine.id mChild = child ∧
-    IsCallerOfId mParent.2 child
+  ∃ m_parent ∈ π.machines, ∃ m_child ∈ π.machines,
+    AnyMachine.id m_parent = parent ∧
+      AnyMachine.id m_child = child ∧
+      is_caller_of_id m_parent.2 child
 
 /-- subsidiary 关系：通过 subroutine 关系的传递闭包得到。 -/
-def ProtocolShape.MachineIsSubsidiaryOf {Payload : Type u}
+def ProtocolShape.machine_is_subsidiary_of {Payload : Type u}
     (π : ProtocolShape Payload) (child parent : MachineId) : Prop :=
-  Relation.TransGen (ProtocolShape.MachineIsSubroutineOf π) child parent
+  Relation.TransGen (ProtocolShape.machine_is_subroutine_of π) child parent
 
 /--
-`id` 是 machine `μ` 相对于协议 `π` 的 external identity。
+`mid` 是 machine `μ` 相对于协议 `π` 的 external identity。
 
 按 Canetti 第 2 节的表述，这意味着：
 
 - `μ` 属于 `π`；
-- `μ` 是 `id` 的 subroutine；
-- `id` 不是 `π` 中任何 machine 的 identity。
+- `μ` 是 `mid` 的 subroutine；
+- `mid` 不是 `π` 中任何 machine 的 identity。
 -/
-def ProtocolShape.IsExternalIdentityOf {Payload : Type u}
-    (π : ProtocolShape Payload) (μ : AnyMachine Payload) (id : MachineId) : Prop :=
+def ProtocolShape.is_external_identity_of {Payload : Type u}
+    (π : ProtocolShape Payload) (μ : AnyMachine Payload) (mid : MachineId) : Prop :=
   μ ∈ π.machines ∧
-  IsSubroutineOfId μ.2 id ∧
-  id ∉ machineIds π.machines
+    is_subroutine_of_id μ.2 mid ∧
+    mid ∉ machine_ids π.machines
 
 /-- `mid` 是否是 `π` 的 main machine。 -/
-def ProtocolShape.IsMainMachine {Payload : Type u}
+def ProtocolShape.is_main_machine {Payload : Type u}
     (π : ProtocolShape Payload) (mid : MachineId) : Prop :=
   ∃ μ ∈ π.machines, AnyMachine.id μ = mid ∧
-    ∃ id, π.IsExternalIdentityOf μ id
+    ∃ ext_id, π.is_external_identity_of μ ext_id
 
 /-- `mid` 是否是 `π` 的 internal machine。 -/
-def ProtocolShape.IsInternalMachine {Payload : Type u}
+def ProtocolShape.is_internal_machine {Payload : Type u}
     (π : ProtocolShape Payload) (mid : MachineId) : Prop :=
-  π.HasMachineId mid ∧ ¬ π.IsMainMachine mid
+  π.has_machine_id mid ∧ ¬ π.is_main_machine mid
 
-/-- protocol 是否使用了某个给定 identity 作为 subroutine 槽位。 -/
-def ProtocolShape.UsesSubroutine {Payload : Type u}
-    (π : ProtocolShape Payload) (sid : MachineId) : Prop :=
-  ∃ parent, π.MachineIsSubroutineOf sid parent
+/-- 某个 main machine 相对于协议的 external identities。 -/
+def ProtocolShape.external_identities_of {Payload : Type u}
+    (π : ProtocolShape Payload) (mid : MachineId) : Set MachineId :=
+  { ext_id | ∃ μ ∈ π.machines, AnyMachine.id μ = mid ∧ π.is_external_identity_of μ ext_id }
 
-@[simp] theorem envId_eq_zero : envId = 0 := rfl
+/-- 所有 main machine identities 的集合。 -/
+noncomputable def ProtocolShape.main_machine_ids {Payload : Type u}
+    (π : ProtocolShape Payload) : Finset MachineId :=
+  by
+    classical
+    exact (machine_ids π.machines).toFinset.filter π.is_main_machine
 
-@[simp] theorem advId_eq_one : advId = 1 := rfl
+/-- 所有 internal machine identities 的集合。 -/
+noncomputable def ProtocolShape.internal_machine_ids {Payload : Type u}
+    (π : ProtocolShape Payload) : Finset MachineId :=
+  by
+    classical
+    exact (machine_ids π.machines).toFinset.filter π.is_internal_machine
+
+@[simp] theorem env_id_eq_zero : env_id = 0 := rfl
+
+@[simp] theorem adv_id_eq_one : adv_id = 1 := rfl
 
 end LeanCryptoProtocols.UC
