@@ -101,7 +101,7 @@ OT 的理想功能机与其通信包装由 `IdealOT` 统一给出。
 
 这里先固定 OT 的业务消息体、payload 包装类型和参与方/功能机的 identities；
 具体的 ideal functionality 机器封装在 `IdealOT` 这个构造器里。
--- TODO: 这个IdealOT有什么用？它不涉及OT的语义？
+-- TODO: 这个IdealOT有什么用？它不涉及OT的语义？dummy party id是不是要作为参数传入？
 -/
 axiom IdealOT : OTIds → IdealFunctionality OTPayload
 

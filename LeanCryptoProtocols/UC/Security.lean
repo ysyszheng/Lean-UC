@@ -143,7 +143,7 @@ def UCEmulatesAt {Payload : Type u}
   | .perfect =>
       ∀ A : Adversary Payload, ∃ S : Simulator Payload,
         ∀ E : Environment Payload,
-          ∀ real_setup : ExecutionSetup π A E, -- TODO: 这里为什么要 forall？ExecutionSetup π A E应该是根据π A E自动得出的
+          ∀ real_setup : ExecutionSetup π A E, -- TODO: 这里为什么要 forall？ExecutionSetup π A E应该是根据π A E自动得出的。forall是为了保证进入后面分析的π A E都满足ExecutionSetup的约束（否则ExecutionSetup无法构造出来）吗？
             ∀ ideal_setup : ExecutionSetup φ S E,
               ∀ n, Controller.exec real_setup n = Controller.exec ideal_setup n
   | .statistical =>
