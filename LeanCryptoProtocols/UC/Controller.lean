@@ -25,8 +25,8 @@ namespace LeanCryptoProtocols.UC
 structure Environment (Payload : Type u) where
   machine : Machine Payload Bool
   id_matches : machine.id = env_id
-  can_communicate_with_adversary :
-    ∃ p ∈ machine.communication_set, p.dest = adv_id ∧ p.label = .backdoor
+  unique_backdoor_port_to_adversary :
+    ∃! p, p ∈ machine.communication_set ∧ p.dest = adv_id ∧ p.label = .backdoor
 
 /--
 半诚实、静态腐化敌手。
@@ -38,10 +38,8 @@ structure Adversary (Payload : Type u) where
   machine : Machine Payload Unit
   corruption_set : Finset MachineId
   id_matches : machine.id = adv_id
-  backdoor_only :
-    ∀ p ∈ machine.communication_set, p.label = .backdoor
-  can_communicate_with_environment :
-    ∃ p ∈ machine.communication_set, p.dest = env_id ∧ p.label = .backdoor
+  unique_backdoor_port_to_environment :
+    ∃! p, p ∈ machine.communication_set ∧ p.dest = env_id ∧ p.label = .backdoor
 
 /-- 在理想世界里，simulator 扮演 adversary 的角色。 -/
 abbrev Simulator (Payload : Type u) := Adversary Payload
@@ -99,14 +97,39 @@ def backdoor_port_from_adversary {Payload : Type u} {π : Protocol Payload}
   else
     none
 
+/-- 环境到 protocol 内 main machine 的输入端口。 -/
+noncomputable def env_input_port_to_main {Payload : Type u} (π : Protocol Payload)
+    (mid : MachineId) : Option CommPort :=
+  by
+  classical
+  if h_main : mid ∈ π.main_machine_ids then
+    let h_mid_machine : mid ∈ machine_ids π.machines :=
+      List.mem_toFinset.mp (Finset.mem_filter.mp h_main).1
+    exact
+      some <|
+        mk_input_port env_id mid
+          (by
+            intro h_eq
+            subst h_eq
+            exact π.env_separated h_mid_machine)
+          (by simp [env_id, adv_id])
+          (by
+            intro h_eq
+            subst h_eq
+            exact π.adv_separated h_mid_machine)
+  else
+    exact none
+
 /-- 某个发送者在运行时可见的 communication set。 -/
--- TODO: 最开始时，让敌手只和环境互相有通信端口。在初始化执行时，动态地给环境加上所有对main machine的通信端口、敌手给自己的静态corrupt set中的machine的通信端口、敌手的静态corrupt set中的machine与敌手的通信端口
 noncomputable def runtime_communication_set {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
     (setup : ExecutionSetup π A E) (sender_id : MachineId) : Finset CommPort :=
-  -- TODO: 在运行时加端口时，还需要再次检查约束吗？是不是不需要，因为加端口时都不会违法约束了？
+  let env_input_ports : Finset CommPort :=
+    by
+      classical
+      exact (π.main_machine_ids.toList.filterMap fun mid => env_input_port_to_main π mid).toFinset
   if _h_env : sender_id = env_id then
-    E.machine.communication_set
+    E.machine.communication_set ∪ env_input_ports
   else if _h_adv : sender_id = adv_id then
     let base := A.machine.communication_set
     let extra :=
@@ -129,7 +152,7 @@ def routes_to_system_machine {Payload : Type u} {π : Protocol Payload}
 def routes_to_external_identity {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
     (_setup : ExecutionSetup π A E) (mid : MachineId) : Prop :=
-  mid ≠ env_id ∧ mid ≠ adv_id ∧ ¬ π.has_machine_id mid -- TODO: 这里不对，要换成用 is_external_identity_of
+  ∃ μ ∈ π.machines, π.is_external_identity_of μ mid
 
 /-- 环境发出的消息是否满足 source identity 约束。 -/
 def environment_source_valid {Payload : Type u} {π : Protocol Payload}
