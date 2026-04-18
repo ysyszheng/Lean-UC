@@ -78,7 +78,7 @@ machine 的局部程序。
 structure MachineProgram (Payload : Type u) (Out : Type v) where
   LocalState : Type v
   init : LocalState
-  receive : LocalState → Envelope Payload → LocalState -- TODO: 这里不应该拿到Envelope Payload，而是只能拿到Message Payload（即不能看到发送的端口信息）
+  receive : LocalState → Message Payload → LocalState
   resume : LocalState → PMF (ActivationResult Payload LocalState)
   is_halted : LocalState → Bool
   output : LocalState → Out
@@ -160,11 +160,10 @@ def is_subroutine_of_id {Payload : Type u} {Out : Type v}
 
 /--
 protocol 的静态外形。
-TODO: ProtocolShape改结构体名为Protocol？
 本项目在这一层只记录 Section 2 里对 protocol shape 必需的静态约束；
 真正的执行分布在 `Security.lean` 中经由 controller 给出。
 -/
-structure ProtocolShape (Payload : Type u) where
+structure Protocol (Payload : Type u) where
   machines : List (AnyMachine Payload)
   unique_ids : (machine_ids machines).Nodup
   caller_has_matching_subroutine :
@@ -178,37 +177,40 @@ structure ProtocolShape (Payload : Type u) where
         ∃ m' ∈ machines, AnyMachine.id m' = mid ∧ is_caller_of_id m'.2 (AnyMachine.id m)
   env_separated : env_id ∉ machine_ids machines
   adv_separated : adv_id ∉ machine_ids machines
+  no_direct_env_or_adv_communication :
+    ∀ m ∈ machines, ∀ p ∈ m.2.communication_set,
+      p.dest ≠ env_id ∧ p.dest ≠ adv_id ∧ p.label ≠ .backdoor
 
 /-- protocol 中是否存在某个给定 identity 的 machine。 -/
-def ProtocolShape.has_machine_id {Payload : Type u}
-    (π : ProtocolShape Payload) (mid : MachineId) : Prop :=
+def Protocol.has_machine_id {Payload : Type u}
+    (π : Protocol Payload) (mid : MachineId) : Prop :=
   mid ∈ machine_ids π.machines
 
 /-- 查找某个 identity 对应的 machine。 -/
-def ProtocolShape.machine_by_id? {Payload : Type u}
-    (π : ProtocolShape Payload) (mid : MachineId) : Option (AnyMachine Payload) :=
+def Protocol.machine_by_id? {Payload : Type u}
+    (π : Protocol Payload) (mid : MachineId) : Option (AnyMachine Payload) :=
   π.machines.find? (fun m => AnyMachine.id m = mid)
 
 /-- protocol 中 `parent` 是否拥有一个 id 为 `child` 的直接 subroutine。 -/
-def ProtocolShape.machine_is_subroutine_of {Payload : Type u}
-    (π : ProtocolShape Payload) (child parent : MachineId) : Prop :=
+def Protocol.machine_is_subroutine_of {Payload : Type u}
+    (π : Protocol Payload) (child parent : MachineId) : Prop :=
   ∃ m_child ∈ π.machines, ∃ m_parent ∈ π.machines,
     AnyMachine.id m_child = child ∧
       AnyMachine.id m_parent = parent ∧
       is_subroutine_of_id m_child.2 parent
 
 /-- protocol 中 `parent` 是否是 id 为 `child` 的 machine 的直接 caller。 -/
-def ProtocolShape.machine_is_caller_of {Payload : Type u}
-    (π : ProtocolShape Payload) (parent child : MachineId) : Prop :=
+def Protocol.machine_is_caller_of {Payload : Type u}
+    (π : Protocol Payload) (parent child : MachineId) : Prop :=
   ∃ m_parent ∈ π.machines, ∃ m_child ∈ π.machines,
     AnyMachine.id m_parent = parent ∧
       AnyMachine.id m_child = child ∧
       is_caller_of_id m_parent.2 child
 
 /-- subsidiary 关系：通过 subroutine 关系的传递闭包得到。 -/
-def ProtocolShape.machine_is_subsidiary_of {Payload : Type u}
-    (π : ProtocolShape Payload) (child parent : MachineId) : Prop :=
-  Relation.TransGen (ProtocolShape.machine_is_subroutine_of π) child parent
+def Protocol.machine_is_subsidiary_of {Payload : Type u}
+    (π : Protocol Payload) (child parent : MachineId) : Prop :=
+  Relation.TransGen (Protocol.machine_is_subroutine_of π) child parent
 
 /--
 `mid` 是 machine `μ` 相对于协议 `π` 的 external identity。
@@ -219,38 +221,38 @@ def ProtocolShape.machine_is_subsidiary_of {Payload : Type u}
 - `μ` 是 `mid` 的 subroutine；
 - `mid` 不是 `π` 中任何 machine 的 identity。
 -/
-def ProtocolShape.is_external_identity_of {Payload : Type u}
-    (π : ProtocolShape Payload) (μ : AnyMachine Payload) (mid : MachineId) : Prop :=
+def Protocol.is_external_identity_of {Payload : Type u}
+    (π : Protocol Payload) (μ : AnyMachine Payload) (mid : MachineId) : Prop :=
   μ ∈ π.machines ∧
     is_subroutine_of_id μ.2 mid ∧
     mid ∉ machine_ids π.machines
 
 /-- `mid` 是否是 `π` 的 main machine。 -/
-def ProtocolShape.is_main_machine {Payload : Type u}
-    (π : ProtocolShape Payload) (mid : MachineId) : Prop :=
+def Protocol.is_main_machine {Payload : Type u}
+    (π : Protocol Payload) (mid : MachineId) : Prop :=
   ∃ μ ∈ π.machines, AnyMachine.id μ = mid ∧
     ∃ ext_id, π.is_external_identity_of μ ext_id
 
 /-- `mid` 是否是 `π` 的 internal machine。 -/
-def ProtocolShape.is_internal_machine {Payload : Type u}
-    (π : ProtocolShape Payload) (mid : MachineId) : Prop :=
+def Protocol.is_internal_machine {Payload : Type u}
+    (π : Protocol Payload) (mid : MachineId) : Prop :=
   π.has_machine_id mid ∧ ¬ π.is_main_machine mid
 
 /-- 某个 main machine 相对于协议的 external identities。 -/
-def ProtocolShape.external_identities_of {Payload : Type u}
-    (π : ProtocolShape Payload) (mid : MachineId) : Set MachineId :=
+def Protocol.external_identities_of {Payload : Type u}
+    (π : Protocol Payload) (mid : MachineId) : Set MachineId :=
   { ext_id | ∃ μ ∈ π.machines, AnyMachine.id μ = mid ∧ π.is_external_identity_of μ ext_id }
 
 /-- 所有 main machine identities 的集合。 -/
-noncomputable def ProtocolShape.main_machine_ids {Payload : Type u}
-    (π : ProtocolShape Payload) : Finset MachineId :=
+noncomputable def Protocol.main_machine_ids {Payload : Type u}
+    (π : Protocol Payload) : Finset MachineId :=
   by
     classical
     exact (machine_ids π.machines).toFinset.filter π.is_main_machine
 
 /-- 所有 internal machine identities 的集合。 -/
-noncomputable def ProtocolShape.internal_machine_ids {Payload : Type u}
-    (π : ProtocolShape Payload) : Finset MachineId :=
+noncomputable def Protocol.internal_machine_ids {Payload : Type u}
+    (π : Protocol Payload) : Finset MachineId :=
   by
     classical
     exact (machine_ids π.machines).toFinset.filter π.is_internal_machine

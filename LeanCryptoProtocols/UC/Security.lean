@@ -98,7 +98,7 @@ ideal protocol。
 便于后续审计。
 -/
 structure IdealProtocol (Payload : Type u) where
-  protocol : ProtocolShape Payload
+  protocol : Protocol Payload
   functionality : IdealFunctionality Payload
   dummy_parties : List (DummyParty Payload)
   machines_eq :
@@ -120,7 +120,7 @@ axiom mk_ideal_protocol {Payload : Type u} :
 
 /-- 真实世界与理想世界在固定 `A,S,E,n` 下的执行差。 -/
 noncomputable def exec_diff {Payload : Type u}
-    {π φ : ProtocolShape Payload}
+    {π φ : Protocol Payload}
     {A : Adversary Payload}
     {S : Simulator Payload}
     {E : Environment Payload}
@@ -138,7 +138,7 @@ UC-emulate：对任意 adversary，都存在 simulator，使得对任意 environ
 -/
 def UCEmulatesAt {Payload : Type u}
     (level : SecurityLevel)
-    (π φ : ProtocolShape Payload) : Prop :=
+    (π φ : Protocol Payload) : Prop :=
   match level with
   | .perfect =>
       ∀ A : Adversary Payload, ∃ S : Simulator Payload,
@@ -164,15 +164,15 @@ def UCEmulatesAt {Payload : Type u}
 
 /-- 常用简写。 -/
 def UCEmulatesPerfect {Payload : Type u}
-    (π φ : ProtocolShape Payload) : Prop :=
+    (π φ : Protocol Payload) : Prop :=
   UCEmulatesAt .perfect π φ
 
 def UCEmulatesStatistical {Payload : Type u}
-    (π φ : ProtocolShape Payload) : Prop :=
+    (π φ : Protocol Payload) : Prop :=
   UCEmulatesAt .statistical π φ
 
 def UCEmulatesComputational {Payload : Type u}
-    (π φ : ProtocolShape Payload) : Prop :=
+    (π φ : Protocol Payload) : Prop :=
   UCEmulatesAt .computational π φ
 
 /--
@@ -180,23 +180,23 @@ UC-realize：协议 `π` UC-emulate 从 `F` 自动构造出的 ideal protocol。
 -/
 def UCRealizesAt {Payload : Type u}
     (level : SecurityLevel)
-    (π : ProtocolShape Payload)
+    (π : Protocol Payload)
     (f : IdealFunctionality Payload) : Prop :=
   UCEmulatesAt level π (mk_ideal_protocol f).protocol
 
 /-- 常用简写。 -/
 def UCRealizesPerfect {Payload : Type u}
-    (π : ProtocolShape Payload)
+    (π : Protocol Payload)
     (f : IdealFunctionality Payload) : Prop :=
   UCRealizesAt .perfect π f
 
 def UCRealizesStatistical {Payload : Type u}
-    (π : ProtocolShape Payload)
+    (π : Protocol Payload)
     (f : IdealFunctionality Payload) : Prop :=
   UCRealizesAt .statistical π f
 
 def UCRealizesComputational {Payload : Type u}
-    (π : ProtocolShape Payload)
+    (π : Protocol Payload)
     (f : IdealFunctionality Payload) : Prop :=
   UCRealizesAt .computational π f
 

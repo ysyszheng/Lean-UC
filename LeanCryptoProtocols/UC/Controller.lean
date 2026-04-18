@@ -52,7 +52,7 @@ abbrev Simulator (Payload : Type u) := Adversary Payload
 所有依赖三者同时出现才能判断真伪的约束，都集中放在这里。
 -/
 structure ExecutionSetup {Payload : Type u}
-    (protocol : ProtocolShape Payload)
+    (protocol : Protocol Payload)
     (adversary : Adversary Payload)
     (environment : Environment Payload) where
   env_port_policy_holds :
@@ -68,7 +68,7 @@ structure ExecutionSetup {Payload : Type u}
 namespace ExecutionSetup
 
 /-- protocol 内某个 identity 对应的基础 communication set。 -/
-def protocol_comm_set {Payload : Type u} {π : ProtocolShape Payload}
+def protocol_comm_set {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
     (_setup : ExecutionSetup π A E) (mid : MachineId) : Finset CommPort :=
   match π.machine_by_id? mid with
@@ -76,7 +76,7 @@ def protocol_comm_set {Payload : Type u} {π : ProtocolShape Payload}
   | none => ∅
 
 /-- 若 `mid` 被腐化，则它到 adversary 的运行时 backdoor 端口。 -/
-def backdoor_port_to_adversary {Payload : Type u} {π : ProtocolShape Payload}
+def backdoor_port_to_adversary {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
     (_setup : ExecutionSetup π A E) (mid : MachineId) : Option CommPort :=
   if _h_mem : mid ∈ A.corruption_set then
@@ -88,7 +88,7 @@ def backdoor_port_to_adversary {Payload : Type u} {π : ProtocolShape Payload}
     none
 
 /-- adversary 到某个被腐化 machine 的运行时 backdoor 端口。 -/
-def backdoor_port_from_adversary {Payload : Type u} {π : ProtocolShape Payload}
+def backdoor_port_from_adversary {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
     (_setup : ExecutionSetup π A E) (mid : MachineId) : Option CommPort :=
   if _h_mem : mid ∈ A.corruption_set then
@@ -101,7 +101,7 @@ def backdoor_port_from_adversary {Payload : Type u} {π : ProtocolShape Payload}
 
 /-- 某个发送者在运行时可见的 communication set。 -/
 -- TODO: 最开始时，让敌手只和环境互相有通信端口。在初始化执行时，动态地给环境加上所有对main machine的通信端口、敌手给自己的静态corrupt set中的machine的通信端口、敌手的静态corrupt set中的machine与敌手的通信端口
-noncomputable def runtime_communication_set {Payload : Type u} {π : ProtocolShape Payload}
+noncomputable def runtime_communication_set {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
     (setup : ExecutionSetup π A E) (sender_id : MachineId) : Finset CommPort :=
   -- TODO: 在运行时加端口时，还需要再次检查约束吗？是不是不需要，因为加端口时都不会违法约束了？
@@ -120,19 +120,19 @@ noncomputable def runtime_communication_set {Payload : Type u} {π : ProtocolSha
     | none => base
 
 /-- 消息是否发往系统中已有的某个 machine。 -/
-def routes_to_system_machine {Payload : Type u} {π : ProtocolShape Payload}
+def routes_to_system_machine {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
     (_setup : ExecutionSetup π A E) (mid : MachineId) : Prop :=
   mid = env_id ∨ mid = adv_id ∨ π.has_machine_id mid
 
 /-- 消息是否发往协议的某个 external identity。 -/
-def routes_to_external_identity {Payload : Type u} {π : ProtocolShape Payload}
+def routes_to_external_identity {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
     (_setup : ExecutionSetup π A E) (mid : MachineId) : Prop :=
   mid ≠ env_id ∧ mid ≠ adv_id ∧ ¬ π.has_machine_id mid -- TODO: 这里不对，要换成用 is_external_identity_of
 
 /-- 环境发出的消息是否满足 source identity 约束。 -/
-def environment_source_valid {Payload : Type u} {π : ProtocolShape Payload}
+def environment_source_valid {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
     (_setup : ExecutionSetup π A E) (envelope : Envelope Payload) : Prop :=
   if _h_adv : envelope.port.dest = adv_id then
@@ -148,7 +148,7 @@ def sender_source_valid {Payload : Type u}
   envelope.message.source = some sender_id
 
 /-- 当前发送者发出的消息是否满足 controller 的运行时检查。 -/
-def outgoing_message_valid {Payload : Type u} {π : ProtocolShape Payload}
+def outgoing_message_valid {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
     (setup : ExecutionSetup π A E)
     (sender_id : MachineId) (envelope : Envelope Payload) : Prop :=
@@ -182,7 +182,7 @@ def id {Payload : Type u} (st : ProtocolMachineState Payload) : MachineId :=
 
 /-- 向该 machine 投递一条消息。 -/
 def receive {Payload : Type u}
-    (st : ProtocolMachineState Payload) (msg : Envelope Payload) :
+    (st : ProtocolMachineState Payload) (msg : Message Payload) :
     ProtocolMachineState Payload :=
   { st with state := st.machine.program.receive st.state msg }
 
@@ -201,7 +201,7 @@ controller 的运行时状态。
 
 环境和敌手的局部状态单独保存；协议内部各 machine 的局部状态以列表保存。
 -/
-structure ControllerState {Payload : Type u} {π : ProtocolShape Payload}
+structure ControllerState {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
     (setup : ExecutionSetup π A E) where
   env_state : E.machine.program.LocalState
@@ -212,7 +212,7 @@ structure ControllerState {Payload : Type u} {π : ProtocolShape Payload}
 namespace Controller
 
 /-- 初始 controller 状态：所有 machine 都处于初始局部状态，先激活环境。 -/
-def initial_state {Payload : Type u} {π : ProtocolShape Payload}
+def initial_state {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
     (setup : ExecutionSetup π A E) : ControllerState setup where
   env_state := E.machine.program.init
@@ -221,7 +221,7 @@ def initial_state {Payload : Type u} {π : ProtocolShape Payload}
   active_id := env_id
 
 /-- 查找某个 protocol machine 的当前运行时状态。 -/
-def find_protocol_state? {Payload : Type u} {π : ProtocolShape Payload}
+def find_protocol_state? {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
     {setup : ExecutionSetup π A E}
     (st : ControllerState setup) (mid : MachineId) :
@@ -229,7 +229,7 @@ def find_protocol_state? {Payload : Type u} {π : ProtocolShape Payload}
   st.protocol_states.find? fun m => m.id = mid
 
 /-- 用新的局部状态替换某个 protocol machine 的当前运行时状态。 -/
-def replace_protocol_state {Payload : Type u} {π : ProtocolShape Payload}
+def replace_protocol_state {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
     {setup : ExecutionSetup π A E}
     (st : ControllerState setup) (new_state : ProtocolMachineState Payload) :
@@ -239,54 +239,54 @@ def replace_protocol_state {Payload : Type u} {π : ProtocolShape Payload}
       if m.id = new_state.id then new_state else m }
 
 /-- 环境是否已经 halt。 -/
-def environment_halted {Payload : Type u} {π : ProtocolShape Payload}
+def environment_halted {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
     {setup : ExecutionSetup π A E}
     (st : ControllerState setup) : Bool :=
   E.machine.program.is_halted st.env_state
 
 /-- 当前环境输出。 -/
-def environment_output {Payload : Type u} {π : ProtocolShape Payload}
+def environment_output {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
     {setup : ExecutionSetup π A E}
     (st : ControllerState setup) : Bool :=
   E.machine.program.output st.env_state
 
 /-- 向环境投递一条消息并激活环境。 -/
-def deliver_to_environment {Payload : Type u} {π : ProtocolShape Payload}
+def deliver_to_environment {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
     {setup : ExecutionSetup π A E}
     (st : ControllerState setup) (msg : Envelope Payload) :
     ControllerState setup :=
   { st with
-    env_state := E.machine.program.receive st.env_state msg
+    env_state := E.machine.program.receive st.env_state msg.message
     active_id := env_id }
 
 /-- 向 adversary 投递一条消息并激活 adversary。 -/
-def deliver_to_adversary {Payload : Type u} {π : ProtocolShape Payload}
+def deliver_to_adversary {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
     {setup : ExecutionSetup π A E}
     (st : ControllerState setup) (msg : Envelope Payload) :
     ControllerState setup :=
   { st with
-    adv_state := A.machine.program.receive st.adv_state msg
+    adv_state := A.machine.program.receive st.adv_state msg.message
     active_id := adv_id }
 
 /-- 向某个 protocol machine 投递一条消息并激活该 machine。 -/
-def deliver_to_protocol_machine {Payload : Type u} {π : ProtocolShape Payload}
+def deliver_to_protocol_machine {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
     {setup : ExecutionSetup π A E}
     (st : ControllerState setup) (mid : MachineId) (msg : Envelope Payload) :
     ControllerState setup :=
   match find_protocol_state? st mid with
   | some target =>
-      let target' := ProtocolMachineState.receive target msg
+      let target' := ProtocolMachineState.receive target msg.message
       { (replace_protocol_state st target') with active_id := mid }
   | none =>
       { st with active_id := env_id }
 
 /-- 根据 envelope 的目的地路由消息。 -/
-noncomputable def route_envelope {Payload : Type u} {π : ProtocolShape Payload}
+noncomputable def route_envelope {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
     (setup : ExecutionSetup π A E)
     (st : ControllerState setup) (sender_id : MachineId) (msg : Envelope Payload) :
@@ -308,7 +308,7 @@ noncomputable def route_envelope {Payload : Type u} {π : ProtocolShape Payload}
     exact { st with active_id := env_id }
 
 /-- 处理某次恢复执行后的可选外发消息。 -/
-noncomputable def handle_outgoing {Payload : Type u} {π : ProtocolShape Payload}
+noncomputable def handle_outgoing {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
     (setup : ExecutionSetup π A E)
     (st : ControllerState setup) (sender_id : MachineId)
@@ -324,7 +324,7 @@ noncomputable def handle_outgoing {Payload : Type u} {π : ProtocolShape Payload
         exact PMF.pure { st with active_id := env_id }
 
 /-- 激活环境一次。 -/
-noncomputable def step_environment {Payload : Type u} {π : ProtocolShape Payload}
+noncomputable def step_environment {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
     (setup : ExecutionSetup π A E)
     (st : ControllerState setup) : PMF (ControllerState setup) :=
@@ -334,7 +334,7 @@ noncomputable def step_environment {Payload : Type u} {π : ProtocolShape Payloa
     handle_outgoing setup st' env_id result.outgoing?
 
 /-- 激活 adversary 一次。 -/
-noncomputable def step_adversary {Payload : Type u} {π : ProtocolShape Payload}
+noncomputable def step_adversary {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
     (setup : ExecutionSetup π A E)
     (st : ControllerState setup) : PMF (ControllerState setup) :=
@@ -344,7 +344,7 @@ noncomputable def step_adversary {Payload : Type u} {π : ProtocolShape Payload}
     handle_outgoing setup st' adv_id result.outgoing?
 
 /-- 激活某个 protocol machine 一次。 -/
-noncomputable def step_protocol_machine {Payload : Type u} {π : ProtocolShape Payload}
+noncomputable def step_protocol_machine {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
     (setup : ExecutionSetup π A E)
     (st : ControllerState setup) (mid : MachineId) : PMF (ControllerState setup) :=
@@ -357,7 +357,7 @@ noncomputable def step_protocol_machine {Payload : Type u} {π : ProtocolShape P
         handle_outgoing setup st' mid result.2
 
 /-- controller 的单步调度。 -/
-noncomputable def step {Payload : Type u} {π : ProtocolShape Payload}
+noncomputable def step {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
     (setup : ExecutionSetup π A E)
     (st : ControllerState setup) : PMF (ControllerState setup) :=
@@ -375,7 +375,7 @@ noncomputable def step {Payload : Type u} {π : ProtocolShape Payload}
 
 若环境提早 halt，则立即停止；否则在预算耗尽时返回当前环境状态。
 -/
-noncomputable def run_steps {Payload : Type u} {π : ProtocolShape Payload}
+noncomputable def run_steps {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
     (setup : ExecutionSetup π A E) :
     Nat → ControllerState setup → PMF (ControllerState setup)
@@ -392,7 +392,7 @@ noncomputable def run_steps {Payload : Type u} {π : ProtocolShape Payload}
 这里使用安全参数 `n` 作为执行预算：controller 最多调度 `n` 次恢复执行，
 如果环境在此之前 halt，则返回最终输出。
 -/
-noncomputable def exec {Payload : Type u} {π : ProtocolShape Payload}
+noncomputable def exec {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
     (setup : ExecutionSetup π A E) : Ensemble Bool :=
   fun n => -- TODO: 这里的 n 是安全参数还是步数预算？如果是安全参数的话，controller 的执行预算应该是某个函数 f(n) 吧？或者干脆直接用步数预算，不用安全参数了？
