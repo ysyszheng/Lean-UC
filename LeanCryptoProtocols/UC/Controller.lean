@@ -33,6 +33,7 @@ structure Environment (Payload : Type u) where
 
 这里不提供主动篡改 honest machine 程序的接口；敌手只携带一个 adversary machine
 和一个初始静态腐化集合。
+TODO: 这里没考虑F与A可以交互
 -/
 structure Adversary (Payload : Type u) where
   machine : Machine Payload Unit
