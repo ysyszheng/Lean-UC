@@ -9,7 +9,8 @@ import LeanCryptoProtocols.UC.Controller
 - dummy party；
 - 从理想功能自动生成 ideal protocol 的构造接口。
 
-这里固定采用 uniform 的 restricted model：不显式建模额外辅助输入，只保留安全参数 `n`。
+这里固定采用 uniform 的 restricted model：
+不显式建模额外辅助输入，只保留安全参数 `n`。
 -/
 
 universe u
@@ -19,7 +20,8 @@ namespace LeanCryptoProtocols.UC
 /--
 理想功能对象。
 
-按 Canetti 原文，理想功能本身只是一个 machine；但为了能自动构造 dummy parties，
+按 Canetti 原文，理想功能本身只是一个 machine；
+但为了能自动构造 dummy parties，
 这里额外记录：
 
 - 参与方 identities；
@@ -193,7 +195,8 @@ noncomputable def output_ports {Payload : Type u} (f : IdealFunctionality Payloa
 theorem mem_output_ports_of_member {Payload : Type u} (f : IdealFunctionality Payload)
     (party_id : MachineId) (h_party : party_id ∈ f.party_ids)
     (ext : MachineId) (h_ext : ext ∈ f.party_external_ids party_id) :
-    output_port_of_member f party_id h_party ⟨ext, h_ext⟩ ∈ output_ports f party_id h_party := by
+    output_port_of_member f party_id h_party ⟨ext, h_ext⟩ ∈
+      output_ports f party_id h_party := by
   classical
   refine Finset.mem_image.mpr ?_
   exact ⟨⟨ext, h_ext⟩, by simp, rfl⟩
@@ -288,9 +291,9 @@ noncomputable def machine {Payload : Type u} (f : IdealFunctionality Payload)
     · intro p hp
       rcases Finset.mem_insert.mp hp with hp | hp
       · subst hp
-        simpa using input_port_owner f party_id h_party
+        exact input_port_owner f party_id h_party
       · rcases Finset.mem_image.mp hp with ⟨ext, _, rfl⟩
-        simpa using output_port_owner f party_id h_party ext
+        exact output_port_owner f party_id h_party ext
     · intro p₁ hp₁ p₂ hp₂ h_dest
       rcases Finset.mem_insert.mp hp₁ with hp₁ | hp₁
       · rcases Finset.mem_insert.mp hp₂ with hp₂ | hp₂
@@ -337,7 +340,8 @@ noncomputable def mk_dummy_party {Payload : Type u}
       have hneq :
           (DummyPartyImpl.output_port_of_member f party_id h_party ext).label ≠ .backdoor := by
         intro h
-        have h_eq : (DummyPartyImpl.output_port_of_member f party_id h_party ext).label = .backdoor := h
+        have h_eq :
+            (DummyPartyImpl.output_port_of_member f party_id h_party ext).label = .backdoor := h
         change PortLabel.subroutineOutput = PortLabel.backdoor at h_eq
         cases h_eq
       exact hneq h_backdoor
@@ -346,7 +350,9 @@ noncomputable def mk_dummy_party {Payload : Type u}
     exact Finset.mem_insert_self _ _
   external_ports_complete := by
     intro ext h_ext
-    refine ⟨DummyPartyImpl.output_port_of_member f party_id h_party ⟨ext, h_ext⟩, ?_, rfl, rfl⟩
+    refine
+      ⟨DummyPartyImpl.output_port_of_member f party_id h_party ⟨ext, h_ext⟩,
+        ?_, rfl, rfl⟩
     exact Finset.mem_insert_of_mem
       (DummyPartyImpl.mem_output_ports_of_member f party_id h_party ext h_ext)
   communication_constraints := by
@@ -378,7 +384,7 @@ private theorem mk_dummy_parties_aux_map_party_id {Payload : Type u}
 /-- 从理想功能的参与方列表自动生成所有 dummy parties。 -/
 noncomputable def mk_dummy_parties {Payload : Type u}
     (f : IdealFunctionality Payload) : List (DummyParty Payload) :=
-  mk_dummy_parties_aux f f.party_ids (fun pid h => h)
+  mk_dummy_parties_aux f f.party_ids (fun _ h => h)
 
 private theorem mk_dummy_parties_map_party_id {Payload : Type u}
     (f : IdealFunctionality Payload) :
@@ -406,7 +412,7 @@ private theorem mk_dummy_parties_mem_party_data {Payload : Type u}
         cases h_mem
     | cons pid rest ih =>
         intro h d h_mem
-        simp [mk_dummy_parties_aux] at h_mem
+        simp only [mk_dummy_parties_aux, List.mem_cons] at h_mem
         rcases h_mem with rfl | h_tail
         · refine ⟨?_, rfl, rfl⟩
           simp [mk_dummy_party]
@@ -458,14 +464,16 @@ noncomputable def mk_ideal_protocol {Payload : Type u}
     induction dummies with
     | nil => rfl
     | cons d rest ih =>
-        simp [machine_ids, ih, dummy_to_any_machine_id]
+        simp [machine_ids, dummy_to_any_machine_id]
   have h_party_ids :
       dummies.map DummyParty.party_id = f.party_ids :=
     mk_dummy_parties_map_party_id f
   have h_ids : machine_ids machines = f.party_ids ++ [f.functionality_id] := by
     calc
       machine_ids machines
-          = machine_ids (dummies.map DummyParty.to_any_machine) ++ [AnyMachine.id ⟨Unit, f.machine⟩] := by
+          =
+            machine_ids (dummies.map DummyParty.to_any_machine) ++
+              [AnyMachine.id ⟨Unit, f.machine⟩] := by
               simp [machines, machine_ids]
       _ = dummies.map DummyParty.party_id ++ [f.functionality_id] := by
               simp [hdummy_ids, AnyMachine.id, f.id_matches]
@@ -488,10 +496,13 @@ noncomputable def mk_ideal_protocol {Payload : Type u}
           rcases h_data with ⟨h_party, h_func, _⟩
           refine ⟨⟨Unit, f.machine⟩, ?_, ?_, ?_⟩
           · exact List.mem_append.mpr <| Or.inr (by simp)
-          · rw [show AnyMachine.id ⟨Unit, f.machine⟩ = f.functionality_id by simp [AnyMachine.id, f.id_matches]]
+          · rw [show AnyMachine.id ⟨Unit, f.machine⟩ = f.functionality_id by
+                  simp [AnyMachine.id, f.id_matches]]
             rw [← h_func, ← h_in.1, ← h_dest]
-          · rcases f.functionality_ports_to_parties d.party_id h_party with ⟨p', hp', hpdest, hplabel⟩
-            simpa [AnyMachine.id, DummyParty.to_any_machine, d.id_matches] using ⟨p', hp', hpdest, hplabel⟩
+          · rcases f.functionality_ports_to_parties d.party_id h_party with
+              ⟨p', hp', hpdest, hplabel⟩
+            simpa [AnyMachine.id, DummyParty.to_any_machine, d.id_matches]
+              using ⟨p', hp', hpdest, hplabel⟩
         · simp [h_out.2] at h_label
       · rcases List.mem_singleton.mp h_fun with rfl
         rcases h_caller with ⟨p, hp, _h_dest, h_label⟩
@@ -510,12 +521,14 @@ noncomputable def mk_ideal_protocol {Payload : Type u}
           rcases h_data with ⟨h_party, _h_func, h_exts⟩
           have h_mid_cases : mid ∈ f.party_ids ∨ mid = f.functionality_id := by
             rw [h_ids] at h_mid_mem
-            simp at h_mid_mem
+            simp only [List.mem_append, List.mem_singleton] at h_mid_mem
             exact h_mid_mem
           rcases h_mid_cases with h_mid_party | h_mid_fun
-          · have h_not_mem := f.external_ids_outside_parties d.party_id h_party mid (by simpa [h_dest, h_exts] using h_out.1)
+          · have h_not_mem := f.external_ids_outside_parties d.party_id h_party mid
+                (by simpa [h_dest, h_exts] using h_out.1)
             exact (h_not_mem h_mid_party).elim
-          · have h_sep := f.external_ids_separated d.party_id h_party mid (by simpa [h_dest, h_exts] using h_out.1)
+          · have h_sep := f.external_ids_separated d.party_id h_party mid
+                (by simpa [h_dest, h_exts] using h_out.1)
             exact (h_sep.1 h_mid_fun).elim
       · rcases List.mem_singleton.mp h_fun with rfl
         rcases h_sub with ⟨p, hp, h_dest, _h_label⟩
@@ -527,10 +540,10 @@ noncomputable def mk_ideal_protocol {Payload : Type u}
         rcases h_data with ⟨_h_party, h_func, _h_exts⟩
         refine ⟨d.to_any_machine, ?_, ?_, ?_⟩
         · exact List.mem_append.mpr <| Or.inl (List.mem_map.mpr ⟨d, hd, rfl⟩)
-        · simpa [DummyParty.to_any_machine, AnyMachine.id, d.id_matches] using hd_id
+        · simpa [dummy_to_any_machine_id] using hd_id
         · rcases d.input_port_present with ⟨p', hp', hpdest, hplabel⟩
           rw [h_func] at hpdest
-          simpa [AnyMachine.id, f.id_matches, d.id_matches] using ⟨p', hp', hpdest, hplabel⟩
+          exact ⟨p', hp', by simpa [AnyMachine.id, f.id_matches] using hpdest, hplabel⟩
     env_separated := by
       intro h_env
       have : env_id ∈ f.party_ids ++ [f.functionality_id] := by
@@ -559,9 +572,12 @@ noncomputable def mk_ideal_protocol {Payload : Type u}
         have h_comm := d.communication_constraints p hp
         rcases h_comm with h_in | h_out
         · rw [h_func] at h_in
-          exact ⟨by simpa [h_in.1] using f.functionality_separated.1,
-            by simpa [h_in.1] using f.functionality_separated.2,
-            by simp [h_in.2]⟩
+          exact ⟨by
+              simpa [h_in.1] using f.functionality_separated.1,
+            by
+              simpa [h_in.1] using f.functionality_separated.2,
+            by
+              simp [h_in.2]⟩
         · rw [h_exts] at h_out
           have h_sep := f.external_ids_separated d.party_id h_party p.dest h_out.1
           exact ⟨h_sep.2.1, h_sep.2.2, by simp [h_out.2]⟩
