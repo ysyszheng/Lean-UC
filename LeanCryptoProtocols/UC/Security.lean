@@ -75,6 +75,7 @@ def UCEmulatesComputational {Payload : Type u}
 /--
 UC-realize：协议 `π` UC-emulate 从 `F` 自动构造出的 ideal protocol。
 TODO: 需要限制S的corrupt set只包含F
+-- TODO: functionality还可以和敌手通信。这个是在构造ExecutionSetup时通过给敌手的corruptionSet加入functionality的ID，后续调用runtime_communication_set动态实现吗
 -/
 def UCRealizesAt {Payload : Type u}
     (level : SecurityLevel)
