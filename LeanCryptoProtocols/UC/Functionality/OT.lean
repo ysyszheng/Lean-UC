@@ -3,7 +3,9 @@ import LeanCryptoProtocols.UC.Security
 /-!
 # 两方 1-out-of-2 OT 理想功能
 
-本文件按新的 message-driven / controller-driven 接口，给出两方 bit OT 的理想功能。允许开多个 `call_id` 的调用 session。
+本文件按新的 message-driven / controller-driven 接口，
+给出两方 bit OT 的理想功能。
+允许在同一 `sid` protocol session 下开多个 `ssid` OT 子会话。
 
 这里：
 
@@ -28,6 +30,12 @@ abbrev OTReceiverInput : Type := Bool
 /-- OT 接收方输出。 -/
 abbrev OTOutput : Type := Bool
 
+/-- Protocol session identifier. -/
+abbrev Sid : Type := Nat
+
+/-- OT sub-session identifier within one protocol session. -/
+abbrev Ssid : Type := Nat
+
 /-- 单次 OT 的值语义。 -/
 def F_OT (sender : OTSenderInput) (choice : OTReceiverInput) : OTOutput :=
   cond choice sender.m1 sender.m0
@@ -47,16 +55,17 @@ theorem F_OT_correct (sender : OTSenderInput) (choice : Bool) :
 
 /-- OT 的业务消息体。 -/
 inductive OTBody where
-  | sender_req (call_id : Nat) (sender : OTSenderInput)
-  | receiver_req (call_id : Nat) (choice : OTReceiverInput)
-  | receiver_resp (call_id : Nat) (out : OTOutput)
+  | sender_req (sid : Sid) (ssid : Ssid) (sender : OTSenderInput)
+  | receiver_req (sid : Sid) (ssid : Ssid) (choice : OTReceiverInput)
+  | receiver_resp (sid : Sid) (ssid : Ssid) (out : OTOutput)
   deriving Repr, DecidableEq
 
 /--
 OT 理想世界里统一使用的 payload。
 
 - `plain`：环境与 dummy party 之间的原始业务消息；
-- `to_functionality`：dummy party 转发给功能机的消息，额外带上原始调用者 identity；
+- `to_functionality`：
+  dummy party 转发给功能机的消息，额外带上原始调用者 identity；
 - `from_functionality`：功能机返回给 dummy party 的消息，额外带上目标 identity。
 -/
 inductive OTPayload where
@@ -111,9 +120,11 @@ def receiver_port (ids : OTIds) : CommPort :=
 
 namespace OTImpl
 
+abbrev OTSessionKey : Type := Sid × Ssid
+
 structure State where
-  sender_reqs : List (Nat × OTSenderInput)
-  receiver_reqs : List (Nat × OTReceiverInput)
+  sender_reqs : List (OTSessionKey × OTSenderInput)
+  receiver_reqs : List (OTSessionKey × OTReceiverInput)
   pending_outgoing : Option (Envelope OTPayload)
 
 def init_state : State := {
@@ -122,83 +133,109 @@ def init_state : State := {
   pending_outgoing := none
 }
 
-def lookup_sender : List (Nat × OTSenderInput) → Nat → Option OTSenderInput
+def lookup_sender
+    : List (OTSessionKey × OTSenderInput) → OTSessionKey → Option OTSenderInput
   | [], _ => none
-  | (cid, sender) :: rest, call_id =>
-      if cid = call_id then some sender else lookup_sender rest call_id
+  | (key', sender) :: rest, key =>
+      if key' = key then some sender else lookup_sender rest key
 
-def lookup_receiver : List (Nat × OTReceiverInput) → Nat → Option OTReceiverInput
+def lookup_receiver
+    : List (OTSessionKey × OTReceiverInput) → OTSessionKey → Option OTReceiverInput
   | [], _ => none
-  | (cid, choice) :: rest, call_id =>
-      if cid = call_id then some choice else lookup_receiver rest call_id
+  | (key', choice) :: rest, key =>
+      if key' = key then some choice else lookup_receiver rest key
 
-def insert_sender_if_absent (reqs : List (Nat × OTSenderInput))
-    (call_id : Nat) (sender : OTSenderInput) : List (Nat × OTSenderInput) :=
-  if lookup_sender reqs call_id |>.isSome then reqs else (call_id, sender) :: reqs
+@[simp] theorem lookup_sender_single_same
+    (sid : Sid) (ssid : Ssid) (sender : OTSenderInput) :
+    lookup_sender [((sid, ssid), sender)] (sid, ssid) = some sender := by
+  simp [lookup_sender]
 
-def insert_receiver_if_absent (reqs : List (Nat × OTReceiverInput))
-    (call_id : Nat) (choice : OTReceiverInput) : List (Nat × OTReceiverInput) :=
-  if lookup_receiver reqs call_id |>.isSome then reqs else (call_id, choice) :: reqs
+@[simp] theorem lookup_sender_single_different_ssid
+    (sid : Sid) {ssid₁ ssid₂ : Ssid} (sender : OTSenderInput)
+    (h : ssid₁ ≠ ssid₂) :
+    lookup_sender [((sid, ssid₁), sender)] (sid, ssid₂) = none := by
+  simp [lookup_sender, h]
 
-def remove_sender (reqs : List (Nat × OTSenderInput)) (call_id : Nat) :
-    List (Nat × OTSenderInput) :=
-  reqs.filter fun entry => entry.1 ≠ call_id
+@[simp] theorem lookup_receiver_single_same
+    (sid : Sid) (ssid : Ssid) (choice : OTReceiverInput) :
+    lookup_receiver [((sid, ssid), choice)] (sid, ssid) = some choice := by
+  simp [lookup_receiver]
 
-def remove_receiver (reqs : List (Nat × OTReceiverInput)) (call_id : Nat) :
-    List (Nat × OTReceiverInput) :=
-  reqs.filter fun entry => entry.1 ≠ call_id
+@[simp] theorem lookup_receiver_single_different_ssid
+    (sid : Sid) {ssid₁ ssid₂ : Ssid} (choice : OTReceiverInput)
+    (h : ssid₁ ≠ ssid₂) :
+    lookup_receiver [((sid, ssid₁), choice)] (sid, ssid₂) = none := by
+  simp [lookup_receiver, h]
+
+def insert_sender_if_absent (reqs : List (OTSessionKey × OTSenderInput))
+    (key : OTSessionKey) (sender : OTSenderInput) : List (OTSessionKey × OTSenderInput) :=
+  if lookup_sender reqs key |>.isSome then reqs else (key, sender) :: reqs
+
+def insert_receiver_if_absent (reqs : List (OTSessionKey × OTReceiverInput))
+    (key : OTSessionKey) (choice : OTReceiverInput) : List (OTSessionKey × OTReceiverInput) :=
+  if lookup_receiver reqs key |>.isSome then reqs else (key, choice) :: reqs
+
+def remove_sender (reqs : List (OTSessionKey × OTSenderInput)) (key : OTSessionKey) :
+    List (OTSessionKey × OTSenderInput) :=
+  reqs.filter fun entry => entry.1 ≠ key
+
+def remove_receiver (reqs : List (OTSessionKey × OTReceiverInput)) (key : OTSessionKey) :
+    List (OTSessionKey × OTReceiverInput) :=
+  reqs.filter fun entry => entry.1 ≠ key
 
 def build_receiver_response (ids : OTIds)
-    (call_id : Nat) (sender : OTSenderInput) (choice : OTReceiverInput) :
+    (sid : Sid) (ssid : Ssid) (sender : OTSenderInput) (choice : OTReceiverInput) :
     Envelope OTPayload := {
   port := receiver_port ids
   message := {
     source := some ids.functionality_id
     label := .subroutineOutput
     payload := .from_functionality ids.receiver_external_id
-      (.receiver_resp call_id (F_OT sender choice))
+      (.receiver_resp sid ssid (F_OT sender choice))
   }
   label_matches := rfl
 }
 
 def receive_sender (ids : OTIds) (st : State)
-    (call_id : Nat) (sender : OTSenderInput) : State :=
-  if lookup_sender st.sender_reqs call_id |>.isSome then
+    (sid : Sid) (ssid : Ssid) (sender : OTSenderInput) : State :=
+  let key : OTSessionKey := (sid, ssid)
+  if lookup_sender st.sender_reqs key |>.isSome then
     st
   else
-    let sender_reqs := insert_sender_if_absent st.sender_reqs call_id sender
-    match lookup_receiver st.receiver_reqs call_id with
+    let sender_reqs := insert_sender_if_absent st.sender_reqs key sender
+    match lookup_receiver st.receiver_reqs key with
     | some choice =>
-        { sender_reqs := remove_sender sender_reqs call_id
-          receiver_reqs := remove_receiver st.receiver_reqs call_id
-          pending_outgoing := some (build_receiver_response ids call_id sender choice) }
+        { sender_reqs := remove_sender sender_reqs key
+          receiver_reqs := remove_receiver st.receiver_reqs key
+          pending_outgoing := some (build_receiver_response ids sid ssid sender choice) }
     | none =>
         { st with sender_reqs := sender_reqs }
 
 def receive_receiver (ids : OTIds) (st : State)
-    (call_id : Nat) (choice : OTReceiverInput) : State :=
-  if lookup_receiver st.receiver_reqs call_id |>.isSome then
+    (sid : Sid) (ssid : Ssid) (choice : OTReceiverInput) : State :=
+  let key : OTSessionKey := (sid, ssid)
+  if lookup_receiver st.receiver_reqs key |>.isSome then
     st
   else
-    let receiver_reqs := insert_receiver_if_absent st.receiver_reqs call_id choice
-    match lookup_sender st.sender_reqs call_id with
+    let receiver_reqs := insert_receiver_if_absent st.receiver_reqs key choice
+    match lookup_sender st.sender_reqs key with
     | some sender =>
-        { sender_reqs := remove_sender st.sender_reqs call_id
-          receiver_reqs := remove_receiver receiver_reqs call_id
-          pending_outgoing := some (build_receiver_response ids call_id sender choice) }
+        { sender_reqs := remove_sender st.sender_reqs key
+          receiver_reqs := remove_receiver receiver_reqs key
+          pending_outgoing := some (build_receiver_response ids sid ssid sender choice) }
     | none =>
         { st with receiver_reqs := receiver_reqs }
 
 def receive (ids : OTIds) (st : State) (msg : Message OTPayload) : State :=
   match msg.source, msg.label, msg.payload with
-  | some src, .input, .to_functionality _ (.sender_req call_id sender) =>
+  | some src, .input, .to_functionality _ (.sender_req sid ssid sender) =>
       if _h_src : src = ids.sender_id then
-        receive_sender ids st call_id sender
+        receive_sender ids st sid ssid sender
       else
         st
-  | some src, .input, .to_functionality _ (.receiver_req call_id choice) =>
+  | some src, .input, .to_functionality _ (.receiver_req sid ssid choice) =>
       if _h_src : src = ids.receiver_id then
-        receive_receiver ids st call_id choice
+        receive_receiver ids st sid ssid choice
       else
         st
   | _, _, _ => st
@@ -259,7 +296,7 @@ private def ot_party_external_ids (ids : OTIds) (pid : MachineId) : Finset Machi
 
 @[simp] private theorem ot_party_external_ids_receiver (ids : OTIds) :
     ot_party_external_ids ids ids.receiver_id = {ids.receiver_external_id} := by
-  simp [ot_party_external_ids, ids.sender_ne_receiver, ids.sender_ne_receiver.symm]
+  simp [ot_party_external_ids, ids.sender_ne_receiver.symm]
 
 /--
 OT 的理想功能机与其通信包装由 `IdealOT` 统一给出。
@@ -300,8 +337,10 @@ noncomputable def IdealOT : OTIds → IdealFunctionality OTPayload
         have h_cases : pid = ids.sender_id ∨ pid = ids.receiver_id := by
           simpa using h_pid
         rcases h_cases with rfl | rfl
-        · simpa using (show ({ids.sender_external_id} : Finset MachineId).Nonempty from by simp)
-        · simpa using (show ({ids.receiver_external_id} : Finset MachineId).Nonempty from by simp)
+        · rw [ot_party_external_ids_sender]
+          exact show ({ids.sender_external_id} : Finset MachineId).Nonempty from by simp
+        · rw [ot_party_external_ids_receiver]
+          exact show ({ids.receiver_external_id} : Finset MachineId).Nonempty from by simp
       external_ids_outside_parties := by
         intro pid h_pid ext h_ext
         have h_cases : pid = ids.sender_id ∨ pid = ids.receiver_id := by
@@ -310,7 +349,7 @@ noncomputable def IdealOT : OTIds → IdealFunctionality OTPayload
         · simp [ot_party_external_ids] at h_ext
           rcases h_ext with rfl
           simp [ids.sender_external_separated.1, ids.sender_external_separated.2.1]
-        · simp [ot_party_external_ids, ids.sender_ne_receiver, ids.sender_ne_receiver.symm] at h_ext
+        · simp [ot_party_external_ids, ids.sender_ne_receiver.symm] at h_ext
           rcases h_ext with rfl
           simp [ids.receiver_external_separated.1, ids.receiver_external_separated.2.1]
       external_ids_separated := by
@@ -323,7 +362,7 @@ noncomputable def IdealOT : OTIds → IdealFunctionality OTPayload
           exact ⟨ids.sender_external_separated.2.2.1,
             ids.sender_external_separated.2.2.2.1,
             ids.sender_external_separated.2.2.2.2⟩
-        · simp [ot_party_external_ids, ids.sender_ne_receiver, ids.sender_ne_receiver.symm] at h_ext
+        · simp [ot_party_external_ids, ids.sender_ne_receiver.symm] at h_ext
           rcases h_ext with rfl
           exact ⟨ids.receiver_external_separated.2.2.1,
             ids.receiver_external_separated.2.2.2.1,
@@ -348,10 +387,10 @@ noncomputable def IdealOT : OTIds → IdealFunctionality OTPayload
         rcases h_cases with rfl | rfl
         · refine ⟨sender_port ids, ?_, rfl, rfl⟩
           change sender_port ids ∈ ({sender_port ids, receiver_port ids} : Finset CommPort)
-          simp [ids.sender_ne_receiver]
+          simp
         · refine ⟨receiver_port ids, ?_, rfl, rfl⟩
           change receiver_port ids ∈ ({sender_port ids, receiver_port ids} : Finset CommPort)
-          simp [ids.sender_ne_receiver]
+          simp
       functionality_comm_constraints := by
         intro p hp
         have hp' : p = sender_port ids ∨ p = receiver_port ids := by

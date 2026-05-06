@@ -1,10 +1,12 @@
+import LeanCryptoProtocols.Config
 import LeanCryptoProtocols.UC.Machine
 import LeanCryptoProtocols.UC.Indistinguishability
 
 /-!
 # Controller 与执行安装
 
-本文件收纳所有依赖 `protocol + adversary + environment` 三者才能判断的执行期对象：
+本文件收纳所有依赖
+`protocol + adversary + environment` 三者才能判断的执行期对象：
 
 - environment；
 - adversary / simulator；
@@ -13,8 +15,9 @@ import LeanCryptoProtocols.UC.Indistinguishability
 - controller 的运行状态与逐步调度；
 - controller 诱导出的输出 ensemble。
 
-这里使用一个有界的 controller 执行器：`exec n` 在安全参数 `n` 给出的预算内
-反复调度，若环境提早 halt，则立即输出环境结果。
+这里使用一个有界的 controller 执行器：
+`exec n` 中的 `n` 只作为安全参数索引；
+controller 的步数预算由 `LeanCryptoProtocols.max_controller_steps` 给出。
 -/
 
 universe u
@@ -223,7 +226,8 @@ end ProtocolMachineState
 /--
 controller 的运行时状态。
 
-环境和敌手的局部状态单独保存；协议内部各 machine 的局部状态以列表保存。
+环境和敌手的局部状态单独保存；
+协议内部各 machine 的局部状态以列表保存。
 -/
 structure ControllerState {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
@@ -234,6 +238,12 @@ structure ControllerState {Payload : Type u} {π : Protocol Payload}
   active_id : MachineId
 
 namespace Controller
+
+/-- Controller 结束原因。 -/
+inductive ExitStatus where
+  | halted
+  | budget_exceeded
+  deriving Repr, DecidableEq
 
 /-- 初始 controller 状态：所有 machine 都处于初始局部状态，先激活环境。 -/
 def initial_state {Payload : Type u} {π : Protocol Payload}
@@ -411,17 +421,62 @@ noncomputable def run_steps {Payload : Type u} {π : Protocol Payload}
         (step setup st).bind fun st' => run_steps setup fuel st'
 
 /--
+在步数预算内运行 controller，并记录是正常 halt 还是耗尽预算。
+
+若初始状态或某次调度后环境 halt，返回 `.halted`；
+若 fuel 用尽且环境仍未 halt，返回 `.budget_exceeded`。
+-/
+noncomputable def run_steps_with_status {Payload : Type u} {π : Protocol Payload}
+    {A : Adversary Payload} {E : Environment Payload}
+    (setup : ExecutionSetup π A E) :
+    Nat → ControllerState setup → PMF (ControllerState setup × ExitStatus)
+  | 0, st =>
+      PMF.pure
+        (st, if environment_halted st then ExitStatus.halted else ExitStatus.budget_exceeded)
+  | fuel + 1, st =>
+      if environment_halted st then
+        PMF.pure (st, ExitStatus.halted)
+      else
+        (step setup st).bind fun st' => run_steps_with_status setup fuel st'
+
+/--
 `exec n` 是当前 uniform 模型下的 controller 输出 ensemble。
 
-这里使用安全参数 `n` 作为执行预算：controller 最多调度 `n` 次恢复执行，
-如果环境在此之前 halt，则返回最终输出。
+`n` 只是安全参数索引；
+TODO: 未来还需要在合适的地方记录n，用于 reduction
+controller 不用它限制 machine 的多项式运行时间。
+实际执行预算使用项目配置中的大常数 `max_controller_steps`。
 -/
 noncomputable def exec {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
     (setup : ExecutionSetup π A E) : Ensemble Bool :=
-  fun n => -- TODO: 这里的 n 是安全参数还是步数预算？如果是安全参数的话，controller 的执行预算应该是某个函数 f(n) 吧？或者干脆直接用步数预算，不用安全参数了？
-    (run_steps setup n (initial_state setup)).bind fun st =>
+  fun _n =>
+    (run_steps setup LeanCryptoProtocols.max_controller_steps
+        (initial_state setup)).bind fun st =>
       PMF.pure (environment_output st)
+
+/-- Controller 输出及退出原因。用于可执行 harness 检查预算耗尽。 -/
+noncomputable def exec_with_status {Payload : Type u} {π : Protocol Payload}
+    {A : Adversary Payload} {E : Environment Payload}
+    (setup : ExecutionSetup π A E) : Ensemble (Bool × ExitStatus) :=
+  fun _n =>
+    (run_steps_with_status setup LeanCryptoProtocols.max_controller_steps
+        (initial_state setup)).bind fun result =>
+      PMF.pure (environment_output result.1, result.2)
+
+/-- Controller 预算耗尽时给命令行 wrapper 使用的提示。 -/
+def budget_exceeded_warning : String :=
+  "warning: UC controller exceeded max_controller_steps before the environment halted"
+
+/--
+命令行 wrapper 的最小提醒接口。
+
+纯 `Controller.exec` 不能产生 IO 副作用；实际 runner 应在得到 `.budget_exceeded`
+时调用这个函数打印提醒。
+-/
+def warn_if_budget_exceeded : ExitStatus → IO Unit
+  | .halted => pure ()
+  | .budget_exceeded => IO.eprintln budget_exceeded_warning
 
 end Controller
 
