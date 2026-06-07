@@ -258,7 +258,7 @@ noncomputable def machine (ids : OTIds) : Machine OTPayload Unit where
   communication_set := communication_set ids
   program := {
     LocalState := State
-    init := init_state
+    init := fun _ => init_state
     receive := receive ids
     resume := resume
     is_halted := fun _ => false
@@ -368,7 +368,7 @@ noncomputable def IdealOT : OTIds → IdealFunctionality OTPayload
             ids.receiver_external_separated.2.2.2.1,
             ids.receiver_external_separated.2.2.2.2⟩
       dummy_local_state := Option (Message OTPayload)
-      dummy_init := none
+      dummy_init := fun _ => none
       dummy_receive := fun _ msg => some msg
       dummy_pending := fun st => st
       dummy_clear := fun _ => none
@@ -397,10 +397,10 @@ noncomputable def IdealOT : OTIds → IdealFunctionality OTPayload
           change p ∈ ({sender_port ids, receiver_port ids} : Finset CommPort) at hp
           simpa [ids.sender_ne_receiver] using hp
         rcases hp' with rfl | rfl
-        · refine ⟨?_, rfl⟩
+        · refine Or.inl ⟨?_, rfl⟩
           change ids.sender_id ∈ ([ids.sender_id, ids.receiver_id] : List MachineId).toFinset
           simp
-        · refine ⟨?_, rfl⟩
+        · refine Or.inl ⟨?_, rfl⟩
           change ids.receiver_id ∈ ([ids.sender_id, ids.receiver_id] : List MachineId).toFinset
           simp
     }

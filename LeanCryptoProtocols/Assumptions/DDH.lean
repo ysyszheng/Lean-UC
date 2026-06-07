@@ -28,6 +28,7 @@ structure GroupDescription where
   Exponent : Type u
   generator : Element
   pow : Element → Exponent → Element
+  encode : Element → Nat
   mul_exp : Exponent → Exponent → Exponent
   sample_exponent : PMF Exponent
 

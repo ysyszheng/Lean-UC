@@ -1,5 +1,6 @@
 import LeanCryptoProtocols.Config
 import LeanCryptoProtocols.Assumptions.DDH
 import LeanCryptoProtocols.UC.Core
+import LeanCryptoProtocols.CaseStudy.SMCEasyUC
 import LeanCryptoProtocols.Circuit.BoolCircuit
 import LeanCryptoProtocols.Circuit.Examples
