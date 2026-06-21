@@ -1,0 +1,92 @@
+\newtheorem{theorem}{Theorem}
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
+
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{assumption}[theorem]{Assumption}
+\newtheorem{invariant}[theorem]{Invariant}
+\newtheorem{obligation}[theorem]{Obligation}
+
+% Auxlib-compatible macro subset.
+% Package loading stays in print.tex/web.tex so that the files remain compatible
+% with leanblueprint and plasTeX.
+\definecolor{AUXLblue}{RGB}{51,145,202}
+\definecolor{AUXLlightblue}{RGB}{144,196,231}
+\definecolor{AUXLorange}{RGB}{246,174,60}
+\definecolor{AUXLlightorange}{RGB}{254,216,177}
+\definecolor{AUXLpurple}{RGB}{135,119,175}
+\definecolor{AUXLlightpurple}{RGB}{226,178,255}
+\definecolor{AUXLyellow}{RGB}{255,221,0}
+\definecolor{AUXLlightyellow}{RGB}{255,238,127}
+\definecolor{AUXLgreen}{RGB}{120,180,88}
+\definecolor{AUXLlightgreen}{RGB}{202,240,142}
+\definecolor{AUXLgray}{RGB}{105,106,107}
+\definecolor{AUXLlightgray}{RGB}{208,209,211}
+\definecolor{AUXLred}{RGB}{219,72,72}
+\definecolor{AUXLlightred}{RGB}{244,195,195}
+
+\newcommand*\dif{\mathop{}\!\mathrm{d}}
+\providecommand{\deq}{\mathrel{:=}}
+\newcommand{\Tr}{\mathop{\operatorname{Tr}}}
+\newcommand{\Var}{\mathop{\operatorname{Var}}}
+\providecommand\Ex{\mathop{\operatorname{\mathbb E}}}
+\providecommand\IP[1]{\langle #1 \rangle}
+\providecommand\bigIP[1]{\bigl\langle #1 \bigr\rangle}
+\providecommand\BigIP[1]{\Bigl\langle #1 \Bigr\rangle}
+\providecommand\biggIP[1]{\biggl\langle #1 \biggr\rangle}
+\providecommand\BiggIP[1]{\Biggl\langle #1 \Biggr\rangle}
+\providecommand{\getsr}{\stackrel{\smash{\$}}\gets}
+\providecommand{\pf}{\mathop{}\!p}
+\providecommand{\dKL}{\mathop{d_{\rm KL}}}
+\providecommand{\proj}{\operatorname{proj}}
+\providecommand{\st}{\textnormal{s.t.}}
+
+\DeclareMathOperator*{\argmax}{arg\,max}
+\DeclareMathOperator*{\argmin}{arg\,min}
+
+\providecommand{\parens}[1]{\left( #1 \right)}
+\providecommand{\brackets}[1]{\left[ #1 \right]}
+\providecommand{\braces}[1]{\left\{ #1 \right\}}
+\providecommand{\angles}[1]{\left\langle #1 \right\rangle}
+\providecommand{\floor}[1]{\left\lfloor #1 \right\rfloor}
+\providecommand{\ceil}[1]{\left\lceil #1 \right\rceil}
+\providecommand{\abs}[1]{\left\lvert #1 \right\rvert}
+\providecommand{\norm}[1]{\left\lVert #1 \right\rVert}
+\providecommand{\set}[1]{\left\{ #1 \right\}}
+
+\newcommand{\negl}{\operatorname{negl}}
+\newcommand{\poly}{\operatorname{poly}}
+\newcommand{\bit}{\{0,1\}}
+\providecommand{\lang}[1]{\textnormal{\textsf{#1}}}
+\providecommand{\comp}[1]{\textnormal{\textbf{#1}}}
+\providecommand{\Gen}{\textnormal{\textsf{Gen}}}
+\providecommand{\Enc}{\textnormal{\textsf{Enc}}}
+\providecommand{\Dec}{\textnormal{\textsf{Dec}}}
+\providecommand{\Sign}{\textnormal{\textsf{Sign}}}
+\providecommand{\Eval}{\textnormal{\textsf{Eval}}}
+
+\newcommand{\Exec}{\mathsf{Exec}}
+\newcommand{\View}{\mathsf{View}}
+\newcommand{\Real}{\mathsf{Real}}
+\newcommand{\Ideal}{\mathsf{Ideal}}
+\newcommand{\Forw}{\mathcal{F}_{\mathsf{Forw}}}
+\newcommand{\Fke}{\mathcal{F}_{\mathsf{KE}}}
+\newcommand{\Fsmc}{\mathcal{F}_{\mathsf{SMC}}}
+\newcommand{\sid}{\mathsf{sid}}
+\newcommand{\ssid}{\mathsf{ssid}}
+
+\newenvironment{pseudocodebox}[1]{%
+  \par\medskip
+  \noindent
+  \begin{center}
+  \begin{tabular}{|p{0.92\linewidth}|}
+  \hline
+  \textbf{#1}\par\smallskip
+}{%
+  \\ \hline
+  \end{tabular}
+  \end{center}
+  \par\medskip
+}

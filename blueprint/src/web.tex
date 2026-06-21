@@ -1,0 +1,24 @@
+% This file makes a web version of the blueprint.
+
+\documentclass{article}
+
+\usepackage{amssymb, amsthm, amsmath}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage[dep_graph]{blueprint}
+
+\input{macros/common}
+\input{macros/web}
+
+\home{https://example.com/lean-crypto-protocols}
+\github{https://example.com/lean-crypto-protocols}
+\dochome{https://example.com/lean-crypto-protocols/doc}
+
+\title{LeanCryptoProtocols Blueprint}
+\author{lean-crypto-protocols}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\input{content}
+\end{document}

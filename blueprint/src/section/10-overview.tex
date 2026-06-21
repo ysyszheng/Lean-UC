@@ -1,0 +1,15 @@
+% !TeX root = ../print.tex
+\section{Scope of This Blueprint}
+
+This blueprint records the proof objects that should be exposed to a reader of
+the Lean development.  It is not a survey and it is not a replacement for the
+Lean kernel: each mathematical claim below is meant to correspond to a concrete
+definition, invariant, or theorem in the repository.
+
+The current focus is the EasyUC secure-message-communication case study.  The
+case study is represented in Lean by message-driven machines, explicit
+communication ports, protocol well-formedness constraints, and a controller that
+serializes activations.  The blueprint follows the same decomposition: first it
+names the machines and functionalities, and then it states the proof obligations
+needed for the UC security theorem.
+

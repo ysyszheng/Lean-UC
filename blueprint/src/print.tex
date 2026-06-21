@@ -1,0 +1,28 @@
+% This file makes a printable version of the blueprint.
+
+\documentclass[a4paper,12pt]{article}
+
+\usepackage{geometry}
+\usepackage{expl3}
+\usepackage{amssymb, amsthm, mathtools}
+\usepackage[unicode,colorlinks=true,linkcolor=blue,urlcolor=magenta,citecolor=blue]{hyperref}
+\usepackage{fontspec}
+\usepackage{xcolor}
+\usepackage[warnings-off={mathtools-colon,mathtools-overbracket}]{unicode-math}
+
+\setmainfont{Times New Roman}
+\setsansfont{Arial}
+\setmonofont{Courier New}
+\setmathfont{STIX Two Math}
+
+\input{macros/common}
+\input{macros/print}
+
+\title{LeanUC Blueprint}
+\author{lean-crypto-protocols}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\input{content}
+\end{document}

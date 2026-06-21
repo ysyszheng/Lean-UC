@@ -1,0 +1,976 @@
+% !TeX root = ../print.tex
+\section{EasyUC Secure Message Communication}
+
+\newcommand{\addr}{\mathsf{addr}}
+\newcommand{\port}{\mathsf{port}}
+\newcommand{\dir}{\mathsf{dir}}
+\newcommand{\advmsg}{\mathsf{adv}}
+\renewcommand{\Exec}{\mathsf{Exec}}
+\newcommand{\MI}{\mathsf{MI}}
+\renewcommand{\Forw}{\mathsf{Forw}}
+\newcommand{\KEReal}{\mathsf{KEReal}}
+\newcommand{\KEIdeal}{\mathsf{KEIdeal}}
+\newcommand{\KESim}{\mathsf{KESim}}
+\newcommand{\SMCReal}{\mathsf{SMCReal}}
+\newcommand{\SMCIdeal}{\mathsf{SMCIdeal}}
+\newcommand{\SMCSim}{\mathsf{SMCSim}}
+\newcommand{\SMCSimComp}{\mathsf{SMCSimComp}}
+\newcommand{\CompEnv}{\mathsf{CompEnv}}
+\newcommand{\DDHOne}{\mathsf{DDH}_1}
+\newcommand{\DDHTwo}{\mathsf{DDH}_2}
+\newcommand{\Adv}{\mathsf{Adv}}
+\newcommand{\Env}{\mathsf{Env}}
+\newcommand{\Sim}{\mathsf{Sim}}
+\newcommand{\Key}{\mathsf{key}}
+\newcommand{\Exp}{\mathsf{exp}}
+\newcommand{\Text}{\mathsf{text}}
+\newcommand{\Univ}{\mathsf{univ}}
+\newcommand{\dexp}{\mathsf{dexp}}
+\newcommand{\inj}{\mathsf{inj}}
+\renewcommand{\proj}{\mathsf{proj}}
+\newcommand{\oget}{\mathsf{oget}}
+\newcommand{\kinv}{\mathsf{kinv}}
+\newcommand{\gid}{\mathsf{kid}}
+\newcommand{\mul}{\mathbin{\hat{\hat{}}}}
+\newcommand{\pow}{\mathbin{\hat{}}}
+\newcommand{\pt}{\mathsf{pt}}
+\newcommand{\true}{\mathsf{true}}
+\newcommand{\false}{\mathsf{false}}
+\newcommand{\res}{\mathsf{res}}
+
+This section states a self-contained proof of UC security for the EasyUC secure
+message communication case study.  The model is the restricted EasyUC model:
+all machines are statically created modules, addresses are hierarchical, and an
+experiment consists of an interface containing a functionality and an adversary,
+interacting with an environment.  A real functionality may contain
+sub-functionalities; the address of the \(i\)-th sub-functionality of address
+\(\alpha\) is written \(\alpha i\).
+
+\subsection{Preliminaries}
+
+\begin{definition}[Ports and messages]
+A port is a pair \((\alpha,i)\), where \(\alpha\in\addr\) is a machine address
+and \(i\in\mathbb{N}\) is a port index.  Messages are of two kinds.
+A direct message is written
+\[
+  p \xrightarrow{x} q ,
+\]
+where \(p,q\) are ports and \(x\in\Univ\).  An adversarial message is written
+\[
+  p \xRightarrow{x} q .
+\]
+The interface routes direct messages to the functionality side and adversarial
+messages to the adversary side, subject to the input guard.  Messages whose
+kind, source, destination, or payload shape is not accepted by the receiving
+machine are rejected and produce no output.
+\end{definition}
+
+\begin{definition}[Execution experiment]
+For a functionality \(F\), an adversary \(A\), an environment \(Z\), addresses
+\(\alpha,\beta\), and an input guard \(G\), let
+\[
+  \Exec(F,A,Z;\alpha,\beta,G,n)
+\]
+be the Bernoulli random variable obtained by running the EasyUC controller at
+security parameter \(n\), with interface \(\MI(F,A)\), functionality address
+\(\alpha\), adversary address \(\beta\), input guard \(G\), and environment
+\(Z\), until \(Z\) returns its final bit.  The probability that the output bit
+is \(1\) is written
+\[
+  \Pr[\Exec(F,A,Z;\alpha,\beta,G,n)=1].
+\]
+All probabilities are over the coins of all randomized machines.
+\end{definition}
+
+\begin{definition}[Computational emulation with concrete bound]
+For functionalities \(F_0,F_1\), adversary transformer \(S\), and bound
+\(\varepsilon\), write
+\[
+  F_0 \preceq_{\varepsilon,S} F_1
+\]
+if for every PPT adversary \(A\), every PPT environment \(Z\), every valid
+address pair \(\alpha,\beta\), every allowed input guard \(G\), and every
+security parameter \(n\),
+\[
+\begin{aligned}
+&\left|
+  \Pr[\Exec(F_0,A,Z;\alpha,\beta,G,n)=1]
+ -\Pr[\Exec(F_1,S(A),Z;\alpha,\beta,G,n)=1]
+ \right|  \\
+&\hspace{4em}\leq \varepsilon(A,Z,\alpha,\beta,G,n).
+\end{aligned}
+\]
+If \(\varepsilon\) is negligible for all PPT \(A,Z\), this is computational
+emulation.
+\end{definition}
+
+\begin{definition}[Algebraic setting]
+Let \(\Exp\) be a finite exponent type with uniform distribution \(\dexp\).
+Let \((\Key,\mul,\gid,\kinv)\) be a finite group.  Let \(g\in\Key\), and let
+\(\pow:\Key\times\Exp\to\Key\) be exponentiation.  We assume:
+\[
+  (g\pow q_1)\pow q_2 = g\pow(q_1q_2)
+  \quad\text{and}\quad
+  q_1q_2=q_2q_1.
+\]
+There is an injection \(\inj:\Text\to\Key\) and a partial projection
+\(\proj:\Key\to\mathsf{option}(\Text)\) satisfying
+\[
+  \proj(\inj(t))=\mathsf{Some}(t)
+  \quad\text{for all }t\in\Text.
+\]
+The one-time-pad encryption of \(t\) under key \(k\) is
+\[
+  \mathsf{otp}(k,t)=\inj(t)\mul k,
+\]
+and decryption is
+\[
+  \mathsf{otpdec}(k,e)=\oget(\proj(e\mul\kinv(k))).
+\]
+\end{definition}
+
+\begin{lemma}[One-time-pad correctness]
+For all \(t\in\Text\) and \(k\in\Key\),
+\[
+  \mathsf{otpdec}(k,\mathsf{otp}(k,t))=t.
+\]
+\end{lemma}
+
+\begin{proof}
+By definition,
+\[
+\begin{aligned}
+ \mathsf{otpdec}(k,\mathsf{otp}(k,t))
+ &= \oget(\proj((\inj(t)\mul k)\mul\kinv(k)))       \\
+ &= \oget(\proj(\inj(t)\mul(k\mul\kinv(k))))        \\
+ &= \oget(\proj(\inj(t)\mul\gid))                   \\
+ &= \oget(\proj(\inj(t)))                           \\
+ &= \oget(\mathsf{Some}(t))                         \\
+ &= t.
+\end{aligned}
+\]
+Only associativity, the inverse law, the identity law, and
+\(\proj(\inj(t))=\mathsf{Some}(t)\) are used.
+\end{proof}
+
+\begin{lemma}[One-time-pad masking]
+Let \(K\) be uniformly distributed over \(\Key\).  For every fixed
+\(t\in\Text\), the random variable \(\inj(t)\mul K\) is uniformly distributed
+over \(\Key\).  Consequently, for all \(t_0,t_1\in\Text\),
+\[
+  \inj(t_0)\mul K \equiv \inj(t_1)\mul K
+\]
+as distributions.
+\end{lemma}
+
+\begin{proof}
+Fix \(t\).  The map
+\[
+  \varphi_t:\Key\to\Key,\qquad \varphi_t(k)=\inj(t)\mul k
+\]
+is a bijection.  Its inverse is
+\[
+  \psi_t(x)=\kinv(\inj(t))\mul x.
+\]
+Indeed,
+\[
+  \psi_t(\varphi_t(k))
+  =\kinv(\inj(t))\mul(\inj(t)\mul k)
+  =(\kinv(\inj(t))\mul\inj(t))\mul k
+  =\gid\mul k
+  =k,
+\]
+and similarly \(\varphi_t(\psi_t(x))=x\).  A bijection preserves the uniform
+distribution on a finite set.  Thus \(\inj(t)\mul K\) is uniform over
+\(\Key\), independently of \(t\).  The final distributional equality follows.
+\end{proof}
+
+\subsection{Functionalities and protocols}
+
+\begin{definition}[The forwarding functionality \(\Forw\)]
+\(\Forw\) is one-shot.  It has a functionality address \(\alpha\), an adversary
+address \(\beta\), one port index \(1\), and three states:
+\[
+  \mathsf{FState}_1,\qquad
+  \mathsf{FState}_2(\pt_1,\pt_2,u),\qquad
+  \mathsf{FState}_3.
+\]
+Its input guard accepts direct and adversarial messages to port \((\alpha,1)\)
+only.
+
+\begin{enumerate}
+\item In state \(\mathsf{FState}_1\), on a direct message
+\[
+  \pt_1 \xrightarrow{(\pt_2,u)} (\alpha,1),
+\]
+where \(\pt_1,\pt_2\) are external to \(\alpha\) and \(\beta\), it outputs
+\[
+  (\alpha,1) \xRightarrow{(\pt_1,\pt_2,u)} (\beta,1)
+\]
+and moves to \(\mathsf{FState}_2(\pt_1,\pt_2,u)\).
+
+\item In state \(\mathsf{FState}_2(\pt_1,\pt_2,u)\), on an adversarial approval
+message from \((\beta,1)\) to \((\alpha,1)\), it outputs
+\[
+  (\alpha,1) \xrightarrow{(\pt_1,u)} \pt_2
+\]
+and moves to \(\mathsf{FState}_3\).
+
+\item In state \(\mathsf{FState}_3\), every message is rejected.
+\end{enumerate}
+Every message not matching the current state is rejected and produces no
+output.
+\end{definition}
+
+\begin{lemma}[Trace theorem for \(\Forw\)]
+For every initial state of \(\Forw\), every input message \(m\), and every
+output/state pair \((o,s')\), the transition relation of \(\Forw\) satisfies
+exactly the following clauses:
+\[
+\begin{array}{ll}
+\mathsf{FState}_1
+ \xrightarrow{\;\pt_1 \xrightarrow{(\pt_2,u)} (\alpha,1)\;}
+ \big((\alpha,1)\xRightarrow{(\pt_1,\pt_2,u)}(\beta,1),
+       \mathsf{FState}_2(\pt_1,\pt_2,u)\big),\\[0.4em]
+\mathsf{FState}_2(\pt_1,\pt_2,u)
+ \xrightarrow{\;(\beta,1)\xRightarrow{\mathsf{ok}}(\alpha,1)\;}
+ \big((\alpha,1)\xrightarrow{(\pt_1,u)}\pt_2,\mathsf{FState}_3\big),\\[0.4em]
+\mathsf{FState}_3 \xrightarrow{\;m\;}(\bot,\mathsf{FState}_3),
+\end{array}
+\]
+and all non-matching cases return \((\bot,s)\), where \(s\) is the prior state.
+\end{lemma}
+
+\begin{proof}
+The proof is by case analysis on the current state and then on the syntactic
+form of the incoming message.  In \(\mathsf{FState}_1\), the only accepted
+message is a direct message to \((\alpha,1)\) with payload \((\pt_2,u)\) and
+valid external source \(\pt_1\); unfolding the transition function gives the
+first displayed transition and no other output.  In
+\(\mathsf{FState}_2(\pt_1,\pt_2,u)\), the only accepted message is an
+adversarial approval from \((\beta,1)\) to \((\alpha,1)\); unfolding gives the
+second displayed transition.  In \(\mathsf{FState}_3\), the definition rejects
+all messages.  The non-matching cases are exactly the remaining constructors
+of the message type and the failed guard checks, each of which returns
+\(\bot\) and leaves the state unchanged.
+\end{proof}
+
+\begin{definition}[The ideal secure-message functionality \(\SMCIdeal\)]
+\(\SMCIdeal\) has address \(\alpha\), adversary address \(\beta\), port indices
+\(1,2,3\), and three states:
+\[
+  \mathsf{SState}_1,\qquad
+  \mathsf{SState}_2(\pt_1,\pt_2,t),\qquad
+  \mathsf{SState}_3.
+\]
+Port \(1\) is the sender-side direct port, port \(2\) is the receiver-side
+direct output port, and port \(3\) communicates with the simulator.  The input
+guard accepts direct messages to port \(1\) and adversarial messages to port
+\(3\).
+
+\begin{enumerate}
+\item In state \(\mathsf{SState}_1\), on
+\[
+  \pt_1 \xrightarrow{(\pt_2,t)}(\alpha,1),
+\]
+where \(\pt_1,\pt_2\) are external to \(\alpha,\beta\), it outputs
+\[
+  (\alpha,3)\xRightarrow{(\pt_1,\pt_2)}(\beta,3)
+\]
+and moves to \(\mathsf{SState}_2(\pt_1,\pt_2,t)\).  The plaintext \(t\) is not
+sent to the adversary.
+
+\item In state \(\mathsf{SState}_2(\pt_1,\pt_2,t)\), on adversarial approval
+from \((\beta,3)\) to \((\alpha,3)\), it outputs
+\[
+  (\alpha,2)\xrightarrow{(\pt_1,t)}\pt_2
+\]
+and moves to \(\mathsf{SState}_3\).
+
+\item In state \(\mathsf{SState}_3\), all messages are rejected.
+\end{enumerate}
+\end{definition}
+
+\begin{definition}[The ideal key-exchange functionality \(\KEIdeal\)]
+\(\KEIdeal\) has address \(\alpha\), adversary address \(\beta\), port indices
+\(1,2,3\), and five states:
+\[
+\begin{array}{c}
+  \mathsf{KState}_1,\quad
+  \mathsf{KState}_2(\pt_1,\pt_2),\quad
+  \mathsf{KState}_3(\pt_1,\pt_2,k),\\
+  \mathsf{KState}_4(\pt_1,\pt_2,k),\quad
+  \mathsf{KState}_5.
+\end{array}
+\]
+The input guard accepts direct messages to ports \(1,2\) and adversarial
+messages to port \(3\).
+
+\begin{enumerate}
+\item In \(\mathsf{KState}_1\), on direct input
+\[
+  \pt_1\xrightarrow{\pt_2}(\alpha,1),
+\]
+it sends
+\[
+  (\alpha,3)\xRightarrow{(\pt_1,\pt_2)}(\beta,2)
+\]
+and moves to \(\mathsf{KState}_2(\pt_1,\pt_2)\).
+
+\item In \(\mathsf{KState}_2(\pt_1,\pt_2)\), on approval from \((\beta,2)\) to
+\((\alpha,3)\), it samples \(q\leftarrow\dexp\), sets \(k=g\pow q\), sends
+\[
+  (\alpha,2)\xrightarrow{(\pt_1,k)}\pt_2,
+\]
+and moves to \(\mathsf{KState}_3(\pt_1,\pt_2,k)\).
+
+\item In \(\mathsf{KState}_3(\pt_1,\pt_2,k)\), on direct input from
+\(\pt_2\) to \((\alpha,2)\), it sends
+\[
+  (\alpha,3)\xRightarrow{\star}(\beta,2)
+\]
+and moves to \(\mathsf{KState}_4(\pt_1,\pt_2,k)\).
+
+\item In \(\mathsf{KState}_4(\pt_1,\pt_2,k)\), on approval from \((\beta,2)\)
+to \((\alpha,3)\), it sends
+\[
+  (\alpha,1)\xrightarrow{k}\pt_1
+\]
+and moves to \(\mathsf{KState}_5\).
+
+\item In \(\mathsf{KState}_5\), all messages are rejected.
+\end{enumerate}
+\end{definition}
+
+\begin{definition}[The real key-exchange functionality \(\KEReal\)]
+\(\KEReal\) has address \(\alpha\), adversary address \(\beta\), two
+sub-functionalities \(\Forw_1\) at \(\alpha1\) and \(\Forw_2\) at \(\alpha2\),
+and party ports \(1,2,3,4\).  Ports \(1,3\) belong to Party~1; ports \(2,4\)
+belong to Party~2.  Its input guard accepts direct messages to ports \(1,2\)
+and adversarial messages addressed to \(\alpha1,\alpha2\).
+
+Party~1 has three states:
+\[
+  \mathsf{P1}_1,\qquad
+  \mathsf{P1}_2(\pt_1,q_1),\qquad
+  \mathsf{P1}_3.
+\]
+\begin{enumerate}
+\item In \(\mathsf{P1}_1\), on direct input
+\[
+  \pt_1\xrightarrow{\pt_2}(\alpha,1),
+\]
+it samples \(q_1\leftarrow\dexp\), sends to \(\Forw_1\)
+\[
+  (\alpha,3)\xrightarrow{((\alpha,4),(\pt_1,\pt_2,g\pow q_1))}(\alpha1,1),
+\]
+and moves to \(\mathsf{P1}_2(\pt_1,q_1)\).
+
+\item In \(\mathsf{P1}_2(\pt_1,q_1)\), on a delivery from \(\Forw_2\) carrying
+\(g\pow q_2\), it sends
+\[
+  (\alpha,1)\xrightarrow{g\pow(q_1q_2)}\pt_1
+\]
+and moves to \(\mathsf{P1}_3\).
+
+\item In \(\mathsf{P1}_3\), all messages are rejected.
+\end{enumerate}
+
+Party~2 has two states:
+\[
+  \mathsf{P2}_1,\qquad
+  \mathsf{P2}_2.
+\]
+\begin{enumerate}
+\item In \(\mathsf{P2}_1\), on a delivery from \(\Forw_1\) carrying
+\((\pt_1,\pt_2,g\pow q_1)\), it samples \(q_2\leftarrow\dexp\), sends
+\[
+  (\alpha,2)\xrightarrow{(\pt_1,g\pow(q_1q_2))}\pt_2,
+\]
+then sends to \(\Forw_2\)
+\[
+  (\alpha,4)\xrightarrow{((\alpha,3),g\pow q_2)}(\alpha2,1),
+\]
+and moves to \(\mathsf{P2}_2(q_2)\).
+
+\item In \(\mathsf{P2}_2\), all messages are rejected.
+\end{enumerate}
+
+The internal distribution loop only routes legal messages among the parties and
+the two forwarding sub-functionalities.  It performs no cryptographic
+computation.
+\end{definition}
+
+\begin{definition}[The hybrid secure-message protocol \(\SMCReal(KE)\)]
+For a key-exchange sub-functionality \(KE\), \(\SMCReal(KE)\) has address
+\(\alpha\), adversary address \(\beta\), sub-functionality \(\Forw\) at
+\(\alpha1\), sub-functionality \(KE\) at \(\alpha2\), and ports \(1,2,3,4\).
+Ports \(1,3\) belong to Party~1; ports \(2,4\) belong to Party~2.
+
+Party~1 has states
+\[
+  \mathsf{SP1}_1,\quad \mathsf{SP1}_2(\pt_1,\pt_2,t),\quad \mathsf{SP1}_3.
+\]
+\begin{enumerate}
+\item In \(\mathsf{SP1}_1\), on
+\[
+  \pt_1\xrightarrow{(\pt_2,t)}(\alpha,1),
+\]
+it calls Party~1 of the KE sub-functionality:
+\[
+  (\alpha,3)\xrightarrow{(\alpha,4)}(\alpha2,1),
+\]
+stores \((\pt_1,\pt_2,t)\), and moves to
+\(\mathsf{SP1}_2(\pt_1,\pt_2,t)\).
+
+\item In \(\mathsf{SP1}_2(\pt_1,\pt_2,t)\), on
+\[
+  (\alpha2,1)\xrightarrow{k}(\alpha,3),
+\]
+it computes \(e=\inj(t)\mul k\), sends to \(\Forw\)
+\[
+  (\alpha,3)\xrightarrow{((\alpha,4),(\pt_1,\pt_2,e))}(\alpha1,1),
+\]
+and moves to \(\mathsf{SP1}_3\).
+
+\item In \(\mathsf{SP1}_3\), all messages are rejected.
+\end{enumerate}
+
+Party~2 has states
+\[
+  \mathsf{SP2}_1,\quad \mathsf{SP2}_2(k),\quad \mathsf{SP2}_3.
+\]
+\begin{enumerate}
+\item In \(\mathsf{SP2}_1\), on
+\[
+  (\alpha2,2)\xrightarrow{((\alpha,3),k)}(\alpha,4),
+\]
+it sends the second-phase KE activation
+\[
+  (\alpha,4)\xrightarrow{\star}(\alpha2,2),
+\]
+stores \(k\), and moves to \(\mathsf{SP2}_2(k)\).
+
+\item In \(\mathsf{SP2}_2(k)\), on a delivery from \(\Forw\) carrying
+\((\pt_1,\pt_2,e)\), it computes
+\[
+  t=\oget(\proj(e\mul\kinv(k))),
+\]
+sends
+\[
+  (\alpha,2)\xrightarrow{(\pt_1,t)}\pt_2,
+\]
+and moves to \(\mathsf{SP2}_3\).
+
+\item In \(\mathsf{SP2}_3\), all messages are rejected.
+\end{enumerate}
+\end{definition}
+
+\subsection{DDH games and the key-exchange reduction}
+
+\begin{definition}[DDH games]
+For an algorithm \(B:\Key^3\to\{0,1\}\), define
+\[
+\begin{array}{ll}
+\DDHOne(B):&
+q_1\leftarrow\dexp;\ q_2\leftarrow\dexp;\
+\res\leftarrow B(g\pow q_1,g\pow q_2,g\pow(q_1q_2));\
+\text{return }\res,\\[0.4em]
+\DDHTwo(B):&
+q_1\leftarrow\dexp;\ q_2\leftarrow\dexp;\ q_3\leftarrow\dexp;\
+\res\leftarrow B(g\pow q_1,g\pow q_2,g\pow q_3);\
+\text{return }\res.
+\end{array}
+\]
+The DDH advantage of \(B\) at security parameter \(n\) is
+\[
+  \Delta_{\mathsf{DDH}}(B,n)
+  =
+  \left|
+    \Pr[\DDHOne(B)(n)=1]
+    -
+    \Pr[\DDHTwo(B)(n)=1]
+  \right|.
+\]
+\end{definition}
+
+\begin{definition}[The KE simulator \(\KESim\)]
+\(\KESim(A)\) wraps an adversary \(A\).  It forwards all environment/adversary
+traffic not addressed to the simulated real functionality.  After the first
+message from \(\KEIdeal\), it learns the ideal functionality address \(\alpha\)
+and hence the real address it must spoof.
+
+It internally simulates the two forwarding sub-functionalities of \(\KEReal\).
+For the first forwarded DH message it samples \(q_1\leftarrow\dexp\) and exposes
+\(g\pow q_1\) to \(A\) as \(\Forw_1\) would.  For the second forwarded DH
+message it samples \(q_2\leftarrow\dexp\) and exposes \(g\pow q_2\) to \(A\) as
+\(\Forw_2\) would.  Approvals obtained from \(A\) are translated into approvals
+to \(\KEIdeal\).  The key output is not chosen by \(\KESim\); it is the
+\(g\pow q\) sampled by \(\KEIdeal\).
+\end{definition}
+
+\begin{definition}[DDH adversary induced by \(Z,A\)]
+For every environment \(Z\), adversary \(A\), addresses \(\alpha,\beta\), and
+guard \(G\), define the DDH adversary
+\[
+  B_{Z,A,\alpha,\beta,G}(X,Y,W)
+\]
+as follows.  It runs the complete KE experiment with \(Z\) and \(A\), but the
+three DH-related values are supplied externally:
+\[
+  g\pow q_1:=X,\qquad g\pow q_2:=Y,\qquad
+  \text{agreed key}:=W.
+\]
+Concretely, the simulated first forwarder leaks \(X\), the simulated second
+forwarder leaks \(Y\), Party~2's key output is \(W\), and Party~1's key output
+is \(W\).  All other routing, adversarial scheduling, rejection behavior, and
+state updates are exactly those of the EasyUC controller.  When the simulated
+environment halts, \(B_{Z,A,\alpha,\beta,G}\) returns the environment's output
+bit.
+\end{definition}
+
+\begin{lemma}[PPT closure for the DDH adversary]
+If \(Z\) and \(A\) are PPT and the controller, message encoders, address tests,
+group operations, and sampling from \(\dexp\) are PPT, then
+\(B_{Z,A,\alpha,\beta,G}\) is PPT.
+\end{lemma}
+
+\begin{proof}
+The machine \(B_{Z,A,\alpha,\beta,G}\) performs one execution of the same
+controller used in the UC experiment.  It replaces the local instructions that
+would sample \(q_1,q_2\) and compute \(g\pow q_1,g\pow q_2,g\pow(q_1q_2)\) by
+reads of its three inputs \(X,Y,W\).  It does not add rewinding or unbounded
+search.  The number of activations is bounded by the same polynomial bound as
+the experiment with \(Z\) and \(A\).  Each additional operation is a fixed
+number of tuple constructions and equality/address tests.  Therefore its
+running time is bounded by the experiment's polynomial plus a fixed polynomial
+overhead.
+\end{proof}
+
+\begin{lemma}[DDH game equality for real KE]
+For all \(Z,A,\alpha,\beta,G,n\),
+\[
+\Pr[\Exec(\KEReal,A,Z;\alpha,\beta,G,n)=1]
+=
+\Pr[\DDHOne(B_{Z,A,\alpha,\beta,G})(n)=1].
+\]
+\end{lemma}
+
+\begin{proof}
+Couple the two executions by using the same coins for \(Z,A\), the controller,
+and all non-DH randomized choices.  In \(\DDHOne\), the inputs to
+\(B_{Z,A,\alpha,\beta,G}\) are
+\[
+  X=g\pow q_1,\qquad Y=g\pow q_2,\qquad W=g\pow(q_1q_2)
+\]
+for uniformly sampled \(q_1,q_2\).  These are exactly the values produced in
+\(\KEReal\): \(\Forw_1\) leaks \(g\pow q_1\), \(\Forw_2\) leaks \(g\pow q_2\),
+and both parties output \(g\pow(q_1q_2)\).  Every other transition is the same
+controller transition with the same input and the same state.  Induction on the
+activation number gives identical full traces, and therefore identical final
+environment bits.  Taking probabilities gives the equality.
+\end{proof}
+
+\begin{lemma}[DDH game equality for ideal KE with simulator]
+For all \(Z,A,\alpha,\beta,G,n\) such that \(2\notin G\),
+\[
+\Pr[\Exec(\KEIdeal,\KESim(A),Z;\alpha,\beta,G,n)=1]
+=
+\Pr[\DDHTwo(B_{Z,A,\alpha,\beta,G})(n)=1].
+\]
+\end{lemma}
+
+\begin{proof}
+In \(\DDHTwo\), the inputs to \(B_{Z,A,\alpha,\beta,G}\) are
+\[
+  X=g\pow q_1,\qquad Y=g\pow q_2,\qquad W=g\pow q_3,
+\]
+where \(q_1,q_2,q_3\) are mutually independent and uniform.  In
+\(\Exec(\KEIdeal,\KESim(A),Z)\), the simulator independently samples
+\(q_1,q_2\) and exposes \(g\pow q_1,g\pow q_2\) through the two simulated
+forwarders, while \(\KEIdeal\) independently samples \(q_3\) and outputs
+\(g\pow q_3\) as the session key.  The guard condition \(2\notin G\) ensures
+that the environment cannot directly inject messages on the simulator port used
+by \(\KESim\), so every message on that port arises only from \(\KEIdeal\) or
+\(\KESim\).
+
+Couple the two experiments by using the same \(q_1,q_2,q_3\), the same coins
+for \(Z,A\), and the same controller coins.  The simulated forwarder messages
+in \(\KESim(A)\) are identical to the forwarder messages generated by
+\(B_{Z,A,\alpha,\beta,G}\) from \(X,Y\).  The key messages output by
+\(\KEIdeal\) are identical to the key messages generated by
+\(B_{Z,A,\alpha,\beta,G}\) from \(W\).  All approvals and non-KE messages are
+routed identically.  Induction on activations yields identical traces and hence
+identical final bits.
+\end{proof}
+
+\begin{theorem}[Concrete DDH security of key exchange]
+For every PPT environment \(Z\), PPT adversary \(A\), valid addresses
+\(\alpha,\beta\), input guard \(G\) with \(2\notin G\), and security parameter
+\(n\),
+\[
+\begin{aligned}
+&\left|
+ \Pr[\Exec(\KEReal,A,Z;\alpha,\beta,G,n)=1]
+ -
+ \Pr[\Exec(\KEIdeal,\KESim(A),Z;\alpha,\beta,G,n)=1]
+\right|\\
+&\hspace{4em}
+\leq
+\Delta_{\mathsf{DDH}}(B_{Z,A,\alpha,\beta,G},n).
+\end{aligned}
+\]
+\end{theorem}
+
+\begin{proof}
+By the real-game equality lemma,
+\[
+ \Pr[\Exec(\KEReal,A,Z;\alpha,\beta,G,n)=1]
+ =
+ \Pr[\DDHOne(B_{Z,A,\alpha,\beta,G})(n)=1].
+\]
+By the ideal-game equality lemma,
+\[
+ \Pr[\Exec(\KEIdeal,\KESim(A),Z;\alpha,\beta,G,n)=1]
+ =
+ \Pr[\DDHTwo(B_{Z,A,\alpha,\beta,G})(n)=1].
+\]
+Substituting these two equalities into the left-hand side gives exactly
+\[
+\left|
+    \Pr[\DDHOne(B_{Z,A,\alpha,\beta,G})(n)=1]
+    -
+    \Pr[\DDHTwo(B_{Z,A,\alpha,\beta,G})(n)=1]
+\right|
+=
+\Delta_{\mathsf{DDH}}(B_{Z,A,\alpha,\beta,G},n).
+\]
+\end{proof}
+
+\subsection{SMC in the \(\KEIdeal\)-hybrid world}
+
+\begin{definition}[The SMC simulator \(\SMCSim\)]
+\(\SMCSim(A)\) wraps \(A\).  It forwards all traffic not addressed to the
+simulated SMC functionality.  Upon receiving from \(\SMCIdeal\) the
+adversarial notification
+\[
+  (\alpha,3)\xRightarrow{(\pt_1,\pt_2)}(\beta,3),
+\]
+it simulates the adversarial view of a run of \(\SMCReal(\KEIdeal)\):
+\begin{enumerate}
+\item it simulates the two adversarial notifications of the KE sub-functionality
+at address \(\alpha2\), using port \(2\) of the adversary as in the KE
+simulator convention;
+\item it samples a fresh \(r\leftarrow\Key\) uniformly and uses \(r\) as the
+simulated ciphertext sent through the forwarding sub-functionality at
+\(\alpha1\);
+\item it exposes to \(A\) the forwarding notification
+\[
+  (\alpha1,1)\xRightarrow{((\alpha,3),(\alpha,4),(\pt_1,\pt_2,r))}(\beta,1);
+\]
+\item when \(A\) approves the simulated forwarding request, it sends the
+approval to \(\SMCIdeal\) on port \(3\).
+\end{enumerate}
+All messages sent by \(A\) to the simulated forwarding and KE sub-functionalities
+are answered exactly as those sub-functionalities would answer, except that the
+ciphertext is sampled as \(r\) and therefore does not depend on the plaintext.
+\end{definition}
+
+\begin{lemma}[Hybrid SMC ciphertext replacement]
+For every fixed plaintext \(t\), every fixed environment/adversary history
+\(h\) before the SMC ciphertext is generated, and every continuation \(C\),
+\[
+  \Pr_{k\leftarrow \Key}[C(h,\inj(t)\mul k)=1]
+  =
+  \Pr_{r\leftarrow \Key}[C(h,r)=1].
+\]
+\end{lemma}
+
+\begin{proof}
+By the one-time-pad masking lemma, \(\inj(t)\mul k\), with uniform \(k\), is
+uniform over \(\Key\).  The random variable \(r\) is also uniform over
+\(\Key\).  Since \(C(h,\cdot)\) is an arbitrary deterministic predicate after
+conditioning on all coins outside the sampled key, equal input distributions
+give equal output probabilities.  Averaging over the previously fixed history
+preserves equality.
+\end{proof}
+
+\begin{lemma}[State correspondence for SMC hybrid and ideal]
+Assume \(3\notin G\).  There is a relation \(R_{\mathsf{SMC}}\) between states
+of the experiments
+\[
+  \Exec(\SMCReal(\KEIdeal),A,Z;\alpha,\beta,G,n)
+\]
+and
+\[
+  \Exec(\SMCIdeal,\SMCSim(A),Z;\alpha,\beta,G,n)
+\]
+with the following properties.
+\begin{enumerate}
+\item The initial states are related.
+\item If related states have no pending SMC ciphertext, then a legal controller
+step on either side is matched by zero or more legal controller steps on the
+other side, preserving \(R_{\mathsf{SMC}}\) and producing the same visible
+message.
+\item If the hybrid side generates the ciphertext \(\inj(t)\mul k\), then the
+ideal/simulator side generates \(r\leftarrow\Key\); replacing the former by the
+latter preserves the distribution of every continuation.
+\item If the hybrid receiver decrypts and sends \((\pt_1,t)\) to \(\pt_2\), the
+ideal side first causes \(\SMCIdeal\) to send the same \((\pt_1,t)\) to
+\(\pt_2\).  After this finite matching sequence the two states are again
+related.
+\end{enumerate}
+\end{lemma}
+
+\begin{proof}
+Define \(R_{\mathsf{SMC}}\) by equality of the environment state, equality of
+the wrapped adversary state, equality of the controller queue outside the
+simulated SMC internals, equality of the stored external ports
+\((\pt_1,\pt_2)\), equality of the KE control state up to the fact that in the
+ideal experiment KE traffic is generated inside \(\SMCSim\), and equality of
+the final message delivered to the external receiver whenever such a message is
+pending.
+
+The initial states are related because all local states are initialized to their
+first state and all queues are empty.
+
+For non-ciphertext steps, inspect the unique machine activated by the
+controller.  If it is \(Z\) or the wrapped adversary \(A\), both experiments
+call the same machine on the same visible message, so they return the same next
+message and next local state.  If it is a routing step or a rejection step, the
+message classification and guard predicates are the same on both sides.  If it
+is a KE or forwarding notification, \(\SMCSim\) was defined to emit exactly the
+notification that \(\SMCReal(\KEIdeal)\) would have emitted.  Thus each such
+step is matched directly.
+
+For the ciphertext step, the hybrid ciphertext is \(\inj(t)\mul k\) where the
+key \(k\) is uniform from \(\KEIdeal\).  The ideal/simulator ciphertext is an
+independent uniform \(r\).  The previous lemma shows that every continuation has
+the same output distribution after this replacement.
+
+For the final receiver step, the hybrid receiver computes
+\[
+  \oget(\proj((\inj(t)\mul k)\mul\kinv(k)))=t
+\]
+by one-time-pad correctness and outputs \((\pt_1,t)\) to \(\pt_2\).  The ideal
+side, after the simulator's approval, causes \(\SMCIdeal\) to output the same
+\((\pt_1,t)\) to \(\pt_2\).  The two-step ideal sequence is finite and restores
+the relation.
+\end{proof}
+
+\begin{theorem}[Perfect SMC security in the \(\KEIdeal\)-hybrid]
+For every PPT environment \(Z\), PPT adversary \(A\), valid addresses
+\(\alpha,\beta\), guard \(G\) with \(3\notin G\), and security parameter \(n\),
+\[
+\Pr[\Exec(\SMCReal(\KEIdeal),A,Z;\alpha,\beta,G,n)=1]
+=
+\Pr[\Exec(\SMCIdeal,\SMCSim(A),Z;\alpha,\beta,G,n)=1].
+\]
+\end{theorem}
+
+\begin{proof}
+Use the state correspondence lemma and induct on the number of controller
+activations until the environment halts.  The base case is initial-state
+correspondence.  In the induction step, the correspondence lemma gives a
+matching finite sequence on the other side and preserves the distribution of
+the continuation.  The only randomized non-lockstep transition is ciphertext
+generation, where equality of all continuations is exactly the ciphertext
+replacement lemma.  Therefore the distribution of the final environment bit is
+identical.
+\end{proof}
+
+\subsection{Bridging the SMC context to the KE experiment}
+
+\begin{definition}[Composed environment]
+For \(X\in\{\KEReal,\KEIdeal\}\), define
+\[
+  \CompEnv_X(Z)
+\]
+to be the environment that internally runs \(Z\) together with the outer SMC
+context \(\SMCReal(\Box)\), where the hole \(\Box\) is implemented by a KE
+stub.  The KE stub forwards calls to the external functionality \(X\) through
+the surrounding interface.  An adversary stub forwards adversarial messages
+between the internal SMC context and the external adversary.  If one stub
+receives a message that must be returned through the other stub, it stores the
+message in a shared one-message mailbox; the other stub returns the mailbox
+contents at its next activation.  The lower guard \(G_{\ell}\) is the guard
+seen by \(Z\); the upper guard \(G_h\) is the guard used by the external KE
+experiment.
+\end{definition}
+
+\begin{lemma}[PPT closure for composed environments]
+If \(Z\) is PPT, then \(\CompEnv_X(Z)\) is PPT for
+\(X\in\{\KEReal,\KEIdeal\}\).
+\end{lemma}
+
+\begin{proof}
+\(\CompEnv_X(Z)\) runs one copy of \(Z\), one copy of the finite-state SMC
+context, and two finite-state stubs.  Each activation performs one activation
+of one of these machines plus a constant number of mailbox and routing
+operations.  The SMC context contains only the one-shot \(\Forw\) and one call
+to \(X\); its distribution loops are equipped with the same decreasing
+termination metrics as the original EasyUC machines.  Thus the number of
+internal routing steps per external activation is bounded by a fixed
+polynomial.  Therefore a polynomial bound for \(Z\) gives a polynomial bound
+for \(\CompEnv_X(Z)\).
+\end{proof}
+
+\begin{lemma}[Bridge for \(\KEReal\)]
+Let \(G_{\ell}\subseteq G_h\) and \(1\in G_h\).  For every \(Z,A,\alpha,\beta,n\),
+\[
+\Pr[\Exec(\SMCReal(\KEReal),A,Z;\alpha,\beta,G_{\ell},n)=1]
+=
+\Pr[\Exec(\KEReal,A,\CompEnv_{\KEReal}(Z);\alpha2,\beta,G_h,n)=1].
+\]
+\end{lemma}
+
+\begin{proof}
+Construct a trace map from the left experiment to the right experiment.  The
+right experiment runs the same \(Z\), the same \(A\), and the same SMC context,
+but the KE sub-functionality is exposed as the external functionality at
+address \(\alpha2\).  All calls from the SMC context to KE are sent through the
+KE stub; all returned messages are put back into the SMC context through the
+stub.  All adversarial messages that the SMC context sends to \(A\) are routed
+through the adversary stub.  The assumption \(G_{\ell}\subseteq G_h\) ensures
+that every adversarial message allowed in the left experiment is allowed in the
+right experiment, and \(1\in G_h\) permits forwarding-control traffic.
+
+The map preserves the local state of \(Z\), \(A\), \(\SMCReal\)'s two parties,
+\(\Forw\), \(\KEReal\)'s two parties, and \(\KEReal\)'s two forwarding
+sub-functionalities.  It also records whether a message is currently in the
+stub mailbox.  Induct on the lexicographic pair
+\[
+  (N,M),
+\]
+where \(N\) is the remaining external activation budget and \(M\) is the sum of
+the termination metrics of the currently active distribution loops.  A direct
+environment or adversary step decreases \(N\).  An internal routing step either
+decreases \(M\) or returns no message and leaves the visible state unchanged.
+The transition definitions of the stubs make the mailbox cases inverse to the
+corresponding direct routing cases.  Hence every left trace has a unique right
+trace with the same probability and the same final environment bit.  The same
+construction in reverse gives uniqueness in the other direction.  Therefore the
+two Bernoulli distributions are equal.
+\end{proof}
+
+\begin{lemma}[Bridge for \(\KEIdeal\)]
+Let \(G_{\ell}\subseteq G_h\) and \(1\in G_h\).  For every \(Z,A,\alpha,\beta,n\),
+\[
+\Pr[\Exec(\SMCReal(\KEIdeal),A,Z;\alpha,\beta,G_{\ell},n)=1]
+=
+\Pr[\Exec(\KEIdeal,A,\CompEnv_{\KEIdeal}(Z);\alpha2,\beta,G_h,n)=1].
+\]
+\end{lemma}
+
+\begin{proof}
+The proof is identical to the proof of the bridge for \(\KEReal\), replacing
+\(\KEReal\)'s local state and two forwarding sub-functionalities by
+\(\KEIdeal\)'s five-state machine.  The termination metric is the remaining
+number of states before \(\mathsf{KState}_5\), plus the finite routing-loop
+metric.  Each accepted input either advances the five-state machine or returns
+no output; no transition increases the metric.  The same trace bijection and
+probability preservation argument applies.
+\end{proof}
+
+\subsection{Full SMC security}
+
+\begin{definition}[Composed SMC simulator]
+For an adversary \(A\), define
+\[
+  \SMCSimComp(A)=\SMCSim(\KESim(A)).
+\]
+The simulator ports are distinct: port \(2\) is reserved for \(\KESim\)'s
+communication with \(\KEIdeal\), and port \(3\) is reserved for
+\(\SMCSim\)'s communication with \(\SMCIdeal\).
+\end{definition}
+
+\begin{theorem}[Concrete UC security of real SMC]
+Let \(G_{\ell}\) be an input guard such that \(2\notin G_{\ell}\) and
+\(3\notin G_{\ell}\).  Let
+\[
+  G_h = G_{\ell}\cup\{1\}.
+\]
+For every PPT environment \(Z\), PPT adversary \(A\), valid addresses
+\(\alpha,\beta\), and security parameter \(n\), let
+\[
+  B =
+  B_{\CompEnv_{\KEReal}(Z),A,\alpha2,\beta,G_h}.
+\]
+Then
+\[
+\begin{aligned}
+&\left|
+ \Pr[\Exec(\SMCReal(\KEReal),A,Z;\alpha,\beta,G_{\ell},n)=1]
+ -
+ \Pr[\Exec(\SMCIdeal,\SMCSimComp(A),Z;\alpha,\beta,G_{\ell},n)=1]
+\right|\\
+&\hspace{4em}
+\leq \Delta_{\mathsf{DDH}}(B,n).
+\end{aligned}
+\]
+\end{theorem}
+
+\begin{proof}
+First apply the bridge for \(\KEReal\):
+\[
+\Pr[\Exec(\SMCReal(\KEReal),A,Z;\alpha,\beta,G_{\ell},n)=1]
+=
+\Pr[\Exec(\KEReal,A,\CompEnv_{\KEReal}(Z);\alpha2,\beta,G_h,n)=1].
+\]
+Since \(2\notin G_{\ell}\) and \(G_h=G_{\ell}\cup\{1\}\), we have
+\(2\notin G_h\).  Hence the concrete DDH security theorem for key exchange
+applies to the right-hand side and gives
+\[
+\begin{aligned}
+&\left|
+\Pr[\Exec(\KEReal,A,\CompEnv_{\KEReal}(Z);\alpha2,\beta,G_h,n)=1]
+-
+\Pr[\Exec(\KEIdeal,\KESim(A),\CompEnv_{\KEReal}(Z);\alpha2,\beta,G_h,n)=1]
+\right|\\
+&\hspace{4em}\leq \Delta_{\mathsf{DDH}}(B,n).
+\end{aligned}
+\]
+The composed environment used with \(\KEIdeal\) is extensionally the same
+machine as \(\CompEnv_{\KEIdeal}(Z)\) after replacing the external
+functionality by \(\KEIdeal\); therefore
+\[
+\Pr[\Exec(\KEIdeal,\KESim(A),\CompEnv_{\KEReal}(Z);\alpha2,\beta,G_h,n)=1]
+=
+\Pr[\Exec(\KEIdeal,\KESim(A),\CompEnv_{\KEIdeal}(Z);\alpha2,\beta,G_h,n)=1].
+\]
+Now apply the bridge for \(\KEIdeal\), with adversary \(\KESim(A)\), in the
+reverse direction:
+\[
+\Pr[\Exec(\KEIdeal,\KESim(A),\CompEnv_{\KEIdeal}(Z);\alpha2,\beta,G_h,n)=1]
+=
+\Pr[\Exec(\SMCReal(\KEIdeal),\KESim(A),Z;\alpha,\beta,G_{\ell},n)=1].
+\]
+Finally apply perfect SMC security in the \(\KEIdeal\)-hybrid, with adversary
+\(\KESim(A)\).  Since \(3\notin G_{\ell}\),
+\[
+\Pr[\Exec(\SMCReal(\KEIdeal),\KESim(A),Z;\alpha,\beta,G_{\ell},n)=1]
+=
+\Pr[\Exec(\SMCIdeal,\SMCSim(\KESim(A)),Z;\alpha,\beta,G_{\ell},n)=1].
+\]
+Combining the displayed equalities with the DDH inequality yields exactly the
+claimed bound, and \(\SMCSim(\KESim(A))=\SMCSimComp(A)\) by definition.
+\end{proof}
+
+\begin{corollary}[Asymptotic UC security of real SMC]
+If the DDH assumption holds for the group family, then
+\[
+  \SMCReal(\KEReal)
+\]
+UC-realizes \(\SMCIdeal\) with simulator \(\SMCSimComp\), for guards excluding
+the simulator ports \(2\) and \(3\).
+\end{corollary}
+
+\begin{proof}
+By the PPT closure lemmas, \(B\) in the concrete SMC theorem is a PPT DDH
+adversary whenever \(Z\) and \(A\) are PPT.  The DDH assumption says that
+\(\Delta_{\mathsf{DDH}}(B,n)\) is negligible for every such \(B\).  The concrete
+SMC theorem upper-bounds the distinguishing advantage of \(Z\) by this
+negligible function.  Therefore the distinguishing advantage is negligible for
+all PPT \(Z,A\), which is precisely UC realization with simulator
+\(\SMCSimComp\).
+\end{proof}
