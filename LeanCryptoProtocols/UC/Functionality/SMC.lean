@@ -127,23 +127,34 @@ def receive_release (ids : SMCIds) (st : State)
   else
     st
 
-def receive (ids : SMCIds) (st : State) (msg : Message SMCEasyUCPayload) : State :=
+def receive (ids : SMCIds) (st : State) (msg : Message SMCEasyUCPayload) :
+    State :=
   match st.phase, msg.source, msg.label, msg.payload with
   | .sstate1, some src, .input, .smc_plain (.send sid plaintext) =>
-      if _h_src : src = ids.sender_id then receive_send ids sid plaintext else st
+      if _h_src : src = ids.sender_id then
+        receive_send ids sid plaintext
+      else
+        st
   | .sstate1, _, .input, .smc_to_functionality caller_source (.send sid plaintext) =>
       if _h_src : caller_source = some ids.sender_external_id then
         receive_send ids sid plaintext
       else
         st
   | .sstate2 pending_msg, some src, .backdoor, .smc_plain (.release sid) =>
-      if _h_src : src = adv_id then receive_release ids st pending_msg sid else st
-  | _, _, _, _ => st
+      if _h_src : src = adv_id then
+        receive_release ids st pending_msg sid
+      else
+        st
+  | _, _, _, _ =>
+      st
 
 noncomputable def resume (st : State) : PMF (ActivationResult SMCEasyUCPayload State) :=
   match st.pending_outgoing with
   | none =>
-      PMF.pure { state := st, outgoing? := none }
+      PMF.pure {
+        state := st
+        outgoing? := none
+      }
   | some envelope =>
       PMF.pure {
         state := { st with pending_outgoing := none }
@@ -178,7 +189,10 @@ theorem receive_to_functionality_sets_pending
 
 theorem resume_init_state_none :
     resume init_state =
-      PMF.pure { state := init_state, outgoing? := none } := by
+      PMF.pure {
+        state := init_state
+        outgoing? := none
+      } := by
   simp [resume, init_state]
 
 theorem resume_pending_some

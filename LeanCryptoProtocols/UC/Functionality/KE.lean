@@ -12,6 +12,13 @@ namespace LeanCryptoProtocols.UC.Functionality
 
 open LeanCryptoProtocols.UC
 
+/-- `KE` 理想功能一次会话中对 simulator 可见的 transcript 与输出 key。 -/
+structure KEIdealTranscript where
+  first_share : GroupElement
+  second_share : GroupElement
+  shared_key : SharedKey
+  deriving Repr, DecidableEq
+
 /-- `KE` 参与方与功能机的统一命名。 -/
 structure KEIds where
   initiator_id : MachineId
@@ -37,6 +44,7 @@ structure KEIds where
       responder_external_id ≠ functionality_id ∧
       responder_external_id ≠ env_id ∧
       responder_external_id ≠ adv_id
+  sample_transcript : ℕ → PMF KEIdealTranscript
 
 /-- `KE` functionality 发往 initiator 的端口。 -/
 def ke_initiator_port (ids : KEIds) : CommPort :=
@@ -66,165 +74,179 @@ def ke_adversary_port (ids : KEIds) : CommPort :=
 
 namespace KEImpl
 
-abbrev SessionKey : Type := Sid × Ssid
-
 inductive Phase where
   | kstate1
+  | kstate2_waiting_sample
+      (initiator_id responder_id : MachineId)
   | kstate2
-      (sid : Sid)
-      (ssid : Ssid)
       (initiator_id responder_id : MachineId)
+      (transcript : KEIdealTranscript)
   | kstate3
-      (sid : Sid)
-      (ssid : Ssid)
       (initiator_id responder_id : MachineId)
-      (shared_key : SharedKey)
+      (transcript : KEIdealTranscript)
   | kstate4
-      (sid : Sid)
-      (ssid : Ssid)
       (initiator_id responder_id : MachineId)
-      (shared_key : SharedKey)
+      (transcript : KEIdealTranscript)
   | kstate5
   deriving Repr, DecidableEq
 
 structure State where
+  sec_param : ℕ
   phase : Phase
   pending_outgoing : Option (Envelope SMCEasyUCPayload)
 
-def init_state : State := {
+def init_state (n : ℕ) : State := {
+  sec_param := n
   phase := .kstate1
   pending_outgoing := none
 }
 
-def initialized? : List SessionKey → SessionKey → Bool
-  | [], _ => false
-  | key' :: rest, key => if key' = key then true else initialized? rest key
-
-def confirmed? : List SessionKey → SessionKey → Bool
-  | [], _ => false
-  | key' :: rest, key => if key' = key then true else confirmed? rest key
-
-def build_init_observe_envelope (ids : KEIds) (sid : Sid) (ssid : Ssid) :
-    Envelope SMCEasyUCPayload :=
-  { port := ke_adversary_port ids
-    message := {
-      source := some ids.functionality_id
-      label := .backdoor
-      payload := .ke_plain
-        (.observe_init sid ssid ids.initiator_external_id ids.responder_external_id)
+def build_init_observe_envelope (ids : KEIds)
+      (transcript : KEIdealTranscript) :
+      Envelope SMCEasyUCPayload :=
+    { port := ke_adversary_port ids
+      message := {
+        source := some ids.functionality_id
+        label := .backdoor
+        payload := .ke_plain
+          (.observe_init_share
+            ids.initiator_external_id
+            ids.responder_external_id
+            transcript.first_share)
+      }
+      label_matches := rfl
     }
-    label_matches := rfl
-  }
 
-def build_confirm_observe_envelope (ids : KEIds) (sid : Sid) (ssid : Ssid) :
-    Envelope SMCEasyUCPayload :=
-  { port := ke_adversary_port ids
-    message := {
-      source := some ids.functionality_id
-      label := .backdoor
-      payload := .ke_plain (.observe_confirm sid ssid)
+def build_confirm_observe_envelope (ids : KEIds)
+      (transcript : KEIdealTranscript) :
+      Envelope SMCEasyUCPayload :=
+    { port := ke_adversary_port ids
+      message := {
+        source := some ids.functionality_id
+        label := .backdoor
+        payload := .ke_plain (.observe_confirm_share transcript.second_share)
+      }
+      label_matches := rfl
     }
-    label_matches := rfl
-  }
 
-def build_initiator_key_envelope (ids : KEIds) (sid : Sid) (ssid : Ssid)
+def build_initiator_key_envelope (ids : KEIds)
     (shared_key : SharedKey) : Envelope SMCEasyUCPayload :=
   { port := ke_initiator_port ids
     message := {
       source := some ids.functionality_id
       label := .subroutineOutput
-      payload := .ke_from_functionality ids.initiator_external_id (.key sid ssid shared_key)
+      payload := .ke_from_functionality ids.initiator_external_id (.key shared_key)
     }
     label_matches := rfl
   }
 
-def build_responder_key_envelope (ids : KEIds) (sid : Sid) (ssid : Ssid)
+def build_responder_key_envelope (ids : KEIds)
     (shared_key : SharedKey) : Envelope SMCEasyUCPayload :=
   { port := ke_responder_port ids
     message := {
       source := some ids.functionality_id
       label := .subroutineOutput
-      payload := .ke_from_functionality ids.responder_external_id (.key sid ssid shared_key)
+      payload := .ke_from_functionality ids.responder_external_id (.key shared_key)
     }
     label_matches := rfl
   }
 
-def receive_init (ids : KEIds) (sid : Sid) (ssid : Ssid) : State :=
-  { phase := .kstate2 sid ssid ids.initiator_external_id ids.responder_external_id
-    pending_outgoing := some (build_init_observe_envelope ids sid ssid) }
+def receive_init (ids : KEIds) (st : State) : State :=
+    { st with
+      phase :=
+        .kstate2_waiting_sample
+          ids.initiator_external_id
+          ids.responder_external_id
+      pending_outgoing := none }
 
-def receive_release_init (ids : KEIds) (st : State)
-    (sid ssid : Nat) (initiator_id responder_id : MachineId)
-    (release_sid : Sid) (release_ssid : Ssid) : State :=
-  if release_sid = sid ∧ release_ssid = ssid then
-    let shared_key := default_shared_key
-    { phase := .kstate3 sid ssid initiator_id responder_id shared_key
-      pending_outgoing := some (build_responder_key_envelope ids sid ssid shared_key) }
-  else
-    st
+def receive_release_init (ids : KEIds)
+      (st : State)
+      (initiator_id responder_id : MachineId)
+      (transcript : KEIdealTranscript) : State :=
+    { st with
+      phase := .kstate3 initiator_id responder_id transcript
+      pending_outgoing :=
+        some (build_responder_key_envelope ids transcript.shared_key) }
 
-def receive_confirm (ids : KEIds) (sid : Sid) (ssid : Ssid)
-    (initiator_id responder_id : MachineId) (shared_key : SharedKey) : State :=
-  { phase := .kstate4 sid ssid initiator_id responder_id shared_key
-    pending_outgoing := some (build_confirm_observe_envelope ids sid ssid) }
+def receive_confirm (ids : KEIds)
+      (st : State)
+      (initiator_id responder_id : MachineId)
+      (transcript : KEIdealTranscript) : State :=
+    { st with
+      phase := .kstate4 initiator_id responder_id transcript
+      pending_outgoing := some (build_confirm_observe_envelope ids transcript) }
 
-def receive_release_confirm (ids : KEIds) (st : State)
-    (sid ssid : Nat) (_initiator_id _responder_id : MachineId)
-    (shared_key : SharedKey) (release_sid : Sid) (release_ssid : Ssid) : State :=
-  if release_sid = sid ∧ release_ssid = ssid then
-    { phase := .kstate5
-      pending_outgoing := some (build_initiator_key_envelope ids sid ssid shared_key) }
-  else
-    st
+def receive_release_confirm (ids : KEIds)
+      (st : State)
+      (transcript : KEIdealTranscript) : State :=
+    { st with
+      phase := .kstate5
+      pending_outgoing :=
+        some (build_initiator_key_envelope ids transcript.shared_key) }
 
-def receive (ids : KEIds) (st : State) (msg : Message SMCEasyUCPayload) : State :=
-  match st.phase, msg.source, msg.label, msg.payload with
-  | .kstate1, some src, .input, .ke_plain (.init sid ssid) =>
-      if _h_src : src = ids.initiator_id then receive_init ids sid ssid else st
-  | .kstate1, _, .input, .ke_to_functionality caller_source (.init sid ssid) =>
-      if _h_src : caller_source = some ids.initiator_external_id then
-        receive_init ids sid ssid
-      else
+def receive (ids : KEIds) (st : State) (msg : Message SMCEasyUCPayload) :
+      State :=
+    match st.phase, msg.source, msg.label, msg.payload with
+    | .kstate1, some src, .input, .ke_plain .init =>
+        if _h_src : src = ids.initiator_id then
+          receive_init ids st
+        else
+          st
+    | .kstate1, _, .input, .ke_to_functionality caller_source .init =>
+        if _h_src : caller_source = some ids.initiator_external_id then
+          receive_init ids st
+        else
+          st
+    | .kstate2 initiator_id responder_id transcript, some src, .backdoor,
+        .ke_plain .release_init =>
+        if _h_src : src = adv_id then
+          receive_release_init ids st initiator_id responder_id transcript
+        else
+          st
+    | .kstate3 initiator_id responder_id transcript, some src, .input,
+        .ke_plain .confirm =>
+        if _h_src : src = ids.responder_id then
+          receive_confirm ids st initiator_id responder_id transcript
+        else
+          st
+    | .kstate3 initiator_id responder_id transcript, _, .input,
+        .ke_to_functionality caller_source .confirm =>
+        if _h_src : caller_source = some ids.responder_external_id then
+          receive_confirm ids st initiator_id responder_id transcript
+        else
+          st
+    | .kstate4 _initiator_id _responder_id transcript, some src, .backdoor,
+        .ke_plain .release_confirm =>
+        if _h_src : src = adv_id then
+          receive_release_confirm ids st transcript
+        else
+          st
+    | _, _, _, _ =>
         st
-  | .kstate2 sid ssid initiator_id responder_id, some src, .backdoor,
-      .ke_plain (.release_init release_sid release_ssid) =>
-      if _h_src : src = adv_id then
-        receive_release_init ids st sid ssid initiator_id responder_id release_sid release_ssid
-      else
-        st
-  | .kstate3 sid ssid initiator_id responder_id shared_key, some src, .input,
-      .ke_plain (.confirm confirm_sid confirm_ssid) =>
-      if _h_src : src = ids.responder_id ∧ confirm_sid = sid ∧ confirm_ssid = ssid then
-        receive_confirm ids sid ssid initiator_id responder_id shared_key
-      else
-        st
-  | .kstate3 sid ssid initiator_id responder_id shared_key, _, .input,
-      .ke_to_functionality caller_source (.confirm confirm_sid confirm_ssid) =>
-      if _h_src :
-          caller_source = some ids.responder_external_id ∧
-            confirm_sid = sid ∧
-            confirm_ssid = ssid then
-        receive_confirm ids sid ssid initiator_id responder_id shared_key
-      else
-        st
-  | .kstate4 sid ssid initiator_id responder_id shared_key, some src, .backdoor,
-      .ke_plain (.release_confirm release_sid release_ssid) =>
-      if _h_src : src = adv_id then
-        receive_release_confirm ids st sid ssid initiator_id responder_id shared_key
-          release_sid release_ssid
-      else
-        st
-  | _, _, _, _ => st
 
-noncomputable def resume (st : State) : PMF (ActivationResult SMCEasyUCPayload State) :=
-  match st.pending_outgoing with
-  | none =>
-      PMF.pure { state := st, outgoing? := none }
-  | some envelope =>
-      PMF.pure {
-        state := { st with pending_outgoing := none }
-        outgoing? := some envelope
-      }
+noncomputable def resume (ids : KEIds) (st : State) :
+      PMF (ActivationResult SMCEasyUCPayload State) :=
+    match st.pending_outgoing with
+    | none =>
+        match st.phase with
+        | .kstate2_waiting_sample initiator_id responder_id =>
+            (ids.sample_transcript st.sec_param).bind fun transcript =>
+              PMF.pure {
+                state := { st with
+                  phase := .kstate2 initiator_id responder_id transcript
+                  pending_outgoing := none }
+                outgoing? := some (build_init_observe_envelope ids transcript)
+              }
+        | _ =>
+            PMF.pure {
+              state := st
+              outgoing? := none
+            }
+    | some envelope =>
+        PMF.pure {
+          state := { st with pending_outgoing := none }
+          outgoing? := some envelope
+        }
 
 def communication_set (ids : KEIds) : Finset CommPort :=
   { ke_initiator_port ids, ke_responder_port ids, ke_adversary_port ids }
@@ -234,9 +256,9 @@ noncomputable def machine (ids : KEIds) : Machine SMCEasyUCPayload Unit where
   communication_set := communication_set ids
   program := {
     LocalState := State
-    init := fun _ => init_state
+    init := init_state
     receive := receive ids
-    resume := resume
+    resume := resume ids
     is_halted := fun _ => false
     output := fun _ => ()
   }

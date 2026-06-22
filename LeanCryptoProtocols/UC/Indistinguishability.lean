@@ -23,8 +23,51 @@ namespace LeanCryptoProtocols.UC
 /-- 只依赖安全参数 `n` 的执行 ensemble。 -/
 abbrev Ensemble (α : Type u) : Type u := ℕ → PMF α
 
-/-- 全局的 PPT 谓词接口。后续困难性假设与安全定义统一复用它。 -/
+/--
+全局的 PPT 谓词接口。
+
+当前仓库把“多项式时间”作为抽象复杂度层处理：这里不在 Lean 中展开具体的
+成本语义或机模型，而是提供一个统一的 `PPT` 谓词，供：
+
+- 敌手；
+- simulator；
+- distinguisher；
+- reduction；
+- 困难性假设中的采样器/生成器
+
+共同复用。
+
+除 `PPT` 及其闭包性质外，本项目的 computational 安全主线不再依赖其他
+“隐藏 proof 的 axiom”。
+-/
 axiom PPT : {α : Sort u} → α → Prop
+
+/-- judgmental 相等下的 `PPT` 保持性。 -/
+axiom ppt_congr {α : Sort u} {x y : α} :
+  x = y → PPT x → PPT y
+
+/-- 确定性函数复合保持 `PPT`。 -/
+axiom ppt_comp {α β γ : Sort u}
+    {f : α → β} {g : β → γ} :
+    PPT f → PPT g → PPT (fun x => g (f x))
+
+/-- 常值算法是 `PPT`。 -/
+axiom ppt_const {α β : Sort u} (b : β) :
+  PPT (fun _ : α => b)
+
+/-- 概率纯返回是 `PPT`。 -/
+axiom ppt_pure {α : Sort u} {β : Type u} (f : α → β) :
+  PPT f → PPT (fun x => PMF.pure (f x))
+
+/--
+随机化算法的顺序组合保持 `PPT`。
+
+这里把 `α → PMF β` 看作一次随机化过程；若前置算法是 `PPT`，且后处理对每个输入
+都给出 `PPT` 算法，则整体仍是 `PPT`。
+-/
+axiom ppt_bind {α : Sort u} {β γ : Type u}
+    {f : α → PMF β} {g : β → PMF γ} :
+    PPT f → (∀ b, PPT (g b)) → PPT (fun x => (f x).bind g)
 
 /-- 计算安全层沿用 mathlib 的超多项式衰减接口。 -/
 def Negligible (f : ℕ → ℝ) : Prop :=

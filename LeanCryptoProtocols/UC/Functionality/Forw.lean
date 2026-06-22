@@ -69,7 +69,6 @@ def forw_adversary_port (ids : ForwIds) : CommPort :=
 namespace ForwImpl
 
 structure PendingMessage where
-  sid : Sid
   sender_id : MachineId
   receiver_id : MachineId
   payload : NetworkBody
@@ -97,7 +96,7 @@ def build_observe_envelope (ids : ForwIds) (msg : PendingMessage) :
   message := {
     source := some ids.functionality_id
     label := .backdoor
-    payload := .forw_plain (.observe msg.sid msg.sender_id msg.receiver_id msg.payload)
+    payload := .forw_plain (.observe msg.sender_id msg.receiver_id msg.payload)
   }
   label_matches := rfl
 }
@@ -109,15 +108,14 @@ def build_deliver_envelope (ids : ForwIds) (msg : PendingMessage) :
     source := some ids.functionality_id
     label := .subroutineOutput
     payload := .forw_from_functionality ids.receiver_external_id
-      (.delivered msg.sid msg.sender_id msg.receiver_id msg.payload)
+      (.delivered msg.sender_id msg.receiver_id msg.payload)
   }
   label_matches := rfl
 }
 
 def receive_submit (ids : ForwIds)
-    (sid : Sid) (sender_id receiver_id : MachineId) (payload : NetworkBody) : State :=
+    (sender_id receiver_id : MachineId) (payload : NetworkBody) : State :=
   let pending_msg : PendingMessage := {
-    sid := sid
     sender_id := sender_id
     receiver_id := receiver_id
     payload := payload
@@ -125,35 +123,40 @@ def receive_submit (ids : ForwIds)
   { phase := .fstate2 pending_msg
     pending_outgoing := some (build_observe_envelope ids pending_msg) }
 
-def receive_release (ids : ForwIds) (st : State)
-    (pending_msg : PendingMessage) (sid : Sid) : State :=
-  if sid = pending_msg.sid then
-      { phase := .fstate3
-        pending_outgoing := some (build_deliver_envelope ids pending_msg) }
-  else
-    st
+def receive_release (ids : ForwIds) (_st : State)
+    (pending_msg : PendingMessage) : State :=
+  { phase := .fstate3
+    pending_outgoing := some (build_deliver_envelope ids pending_msg) }
 
-def receive (ids : ForwIds) (st : State) (msg : Message SMCEasyUCPayload) : State :=
+def receive (ids : ForwIds) (st : State) (msg : Message SMCEasyUCPayload) :
+    State :=
   match st.phase, msg.source, msg.label, msg.payload with
-  | .fstate1, some src, .input, .forw_plain (.submit sid sender_id receiver_id payload) =>
+  | .fstate1, some src, .input, .forw_plain (.submit sender_id receiver_id payload) =>
       if _h_src : src = sender_id then
-        receive_submit ids sid sender_id receiver_id payload
+        receive_submit ids sender_id receiver_id payload
       else
         st
   | .fstate1, _, .input, .forw_to_functionality caller_source
-      (.submit sid sender_id receiver_id payload) =>
+      (.submit sender_id receiver_id payload) =>
       if _h_src : caller_source = some sender_id then
-        receive_submit ids sid sender_id receiver_id payload
+        receive_submit ids sender_id receiver_id payload
       else
         st
-  | .fstate2 pending_msg, some src, .backdoor, .forw_plain (.release sid) =>
-      if _h_src : src = adv_id then receive_release ids st pending_msg sid else st
-  | _, _, _, _ => st
+  | .fstate2 pending_msg, some src, .backdoor, .forw_plain .release =>
+      if _h_src : src = adv_id then
+        receive_release ids st pending_msg
+      else
+        st
+  | _, _, _, _ =>
+      st
 
 noncomputable def resume (st : State) : PMF (ActivationResult SMCEasyUCPayload State) :=
   match st.pending_outgoing with
   | none =>
-      PMF.pure { state := st, outgoing? := none }
+      PMF.pure {
+        state := st
+        outgoing? := none
+      }
   | some envelope =>
       PMF.pure {
         state := { st with pending_outgoing := none }

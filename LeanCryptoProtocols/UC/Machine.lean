@@ -14,7 +14,7 @@ import Mathlib
 这里先只刻画“协议长什么样”，而不在本文件里定义 UC 安全或组合定理。
 -/
 
-universe u v
+universe u v w
 
 namespace LeanCryptoProtocols.UC
 
@@ -34,6 +34,12 @@ inductive PortLabel where
   | backdoor
   deriving Repr, DecidableEq, Inhabited
 
+/-- core 层用于区分普通/control 消息与静态腐化指令。 -/
+inductive MessageInstruction where
+  | plain
+  | corrupt (party_id : MachineId)
+  deriving Repr, DecidableEq, Inhabited
+
 /-- 一个端口由发送者 identity、接收者 identity 和标签组成。 -/
 structure CommPort where
   owner : MachineId
@@ -48,8 +54,22 @@ structure CommPort where
 structure Message (Payload : Type u) where
   source : Option MachineId
   label : PortLabel
+  instruction : MessageInstruction := .plain
   payload : Payload
+  instruction_valid : ∀ pid, instruction = .corrupt pid → label = .backdoor := by
+    intro pid h
+    cases h
   deriving Repr, DecidableEq
+
+namespace Message
+
+/-- 腐化指令只能出现在 backdoor 消息上。 -/
+theorem corrupt_instruction_implies_backdoor {Payload : Type u}
+    (msg : Message Payload) {pid : MachineId} :
+    msg.instruction = .corrupt pid → msg.label = .backdoor :=
+  msg.instruction_valid pid
+
+end Message
 
 /-- 发送给某个端口的一条消息。 -/
 structure Envelope (Payload : Type u) where
@@ -73,11 +93,11 @@ machine 的局部程序。
 - 收到一条消息后如何把消息写入本地状态；
 - 当前恢复执行时如何运行到“发送一条消息或挂起”为止；
 - 是否已经 halt；
-- 局部输出提取函数。
+- 局部输出提取函数；
 -/
 structure MachineProgram (Payload : Type u) (Out : Type v) where
-  LocalState : Type v
-  init : LocalState
+  LocalState : Type w
+  init : ℕ → LocalState
   receive : LocalState → Message Payload → LocalState
   resume : LocalState → PMF (ActivationResult Payload LocalState)
   is_halted : LocalState → Bool
@@ -95,13 +115,28 @@ structure Machine (Payload : Type u) (Out : Type v) where
 /-- 抹去输出类型后的 machine。 -/
 abbrev AnyMachine (Payload : Type u) := Σ Out : Type, Machine Payload Out
 
+/-- 抹去输出类型后的 machine 运行时初始状态。 -/
+abbrev AnyMachineState (Payload : Type u) :=
+  Σ m : AnyMachine Payload, m.2.program.LocalState
+
 /-- 从异质 machine 中抽取 identity。 -/
 def AnyMachine.id {Payload : Type u} (m : AnyMachine Payload) : MachineId :=
   m.2.id
 
+/-- 从异质 machine state 中抽取 identity。 -/
+def AnyMachineState.id {Payload : Type u} (st : AnyMachineState Payload) :
+    MachineId :=
+  st.1.id
+
 /-- 抽取 protocol 中所有 machine identity。 -/
 def machine_ids {Payload : Type u} (machines : List (AnyMachine Payload)) : List MachineId :=
   machines.map AnyMachine.id
+
+/-- 按 machine 自身的 `init` 字段构造默认初始状态。 -/
+def default_machine_states {Payload : Type u}
+    (machines : List (AnyMachine Payload)) (n : ℕ) :
+    List (AnyMachineState Payload) :=
+  machines.map fun m => ⟨m, m.2.program.init n⟩
 
 /-- 构造一个普通 `input` 端口。 -/
 def mk_input_port (owner dest : MachineId) (hne : owner ≠ dest)
@@ -123,9 +158,9 @@ def mk_subroutine_output_port (owner dest : MachineId) (hne : owner ≠ dest)
     refine ⟨hne, ?_⟩
     simp [h_owner, h_dest]
 
-/-- 构造一个 `backdoor` 端口。 -/
-def mk_backdoor_port (owner dest : MachineId) (hne : owner ≠ dest)
-    (hadv : owner = adv_id ∨ dest = adv_id) : CommPort where
+/-- 构造一个 `backdoor` 端口；control/corruption 语义由消息指令区分。 -/
+def mk_backdoor_port (owner dest : MachineId)
+    (hne : owner ≠ dest) (hadv : owner = adv_id ∨ dest = adv_id) : CommPort where
   owner := owner
   dest := dest
   label := .backdoor
@@ -165,6 +200,13 @@ protocol 的静态外形。
 -/
 structure Protocol (Payload : Type u) where
   machines : List (AnyMachine Payload)
+  initial_states : ℕ → PMF (List (AnyMachineState Payload)) :=
+    fun n => PMF.pure (default_machine_states machines n)
+  /-- 该执行模型允许 adversary 静态腐化的机器集合。默认是无腐化模型。 -/
+  corruptible_machines : Finset MachineId := ∅
+  corruptible_machines_within_protocol :
+    corruptible_machines ⊆ (machine_ids machines).toFinset := by
+      simp
   unique_ids : (machine_ids machines).Nodup
   caller_has_matching_subroutine :
     ∀ m ∈ machines, ∀ mid : MachineId,
@@ -177,9 +219,11 @@ structure Protocol (Payload : Type u) where
         ∃ m' ∈ machines, AnyMachine.id m' = mid ∧ is_caller_of_id m'.2 (AnyMachine.id m)
   env_separated : env_id ∉ machine_ids machines
   adv_separated : adv_id ∉ machine_ids machines
-  no_direct_env_or_adv_communication :
+  no_direct_environment_communication :
+    ∀ m ∈ machines, ∀ p ∈ m.2.communication_set, p.dest ≠ env_id
+  adversary_communication_is_backdoor :
     ∀ m ∈ machines, ∀ p ∈ m.2.communication_set,
-      p.dest ≠ env_id ∧ p.dest ≠ adv_id ∧ p.label ≠ .backdoor
+      p.dest = adv_id → p.label = .backdoor
 
 /-- protocol 中是否存在某个给定 identity 的 machine。 -/
 def Protocol.has_machine_id {Payload : Type u}

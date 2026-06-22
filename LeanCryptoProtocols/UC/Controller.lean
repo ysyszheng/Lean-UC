@@ -20,7 +20,7 @@ import LeanCryptoProtocols.UC.Indistinguishability
 controller 的步数预算由 `LeanCryptoProtocols.max_controller_steps` 给出。
 -/
 
-universe u
+universe u v
 
 namespace LeanCryptoProtocols.UC
 
@@ -31,16 +31,9 @@ structure Environment (Payload : Type u) where
   unique_backdoor_port_to_adversary :
     ∃! p, p ∈ machine.communication_set ∧ p.dest = adv_id ∧ p.label = .backdoor
 
-/--
-半诚实、静态腐化敌手。
-
-这里不提供主动篡改 honest machine 程序的接口；敌手只携带一个 adversary machine
-和一个初始静态腐化集合。
-TODO: 这里没考虑F与A可以交互
--/
+/-- 敌手本身也是一个 machine；静态腐化集合由 `ExecutionSetup` 固定。 -/
 structure Adversary (Payload : Type u) where
   machine : Machine Payload Unit
-  corruption_set : Finset MachineId
   id_matches : machine.id = adv_id
   unique_backdoor_port_to_environment :
     ∃! p, p ∈ machine.communication_set ∧ p.dest = env_id ∧ p.label = .backdoor
@@ -57,15 +50,17 @@ structure ExecutionSetup {Payload : Type u}
     (protocol : Protocol Payload)
     (adversary : Adversary Payload)
     (environment : Environment Payload) where
+  /-- 本次执行固定的 static corruption pattern。 -/
+  corrupted_parties : Finset MachineId
   env_port_policy_holds :
     ∀ p ∈ environment.machine.communication_set,
       (p.dest = adv_id ∧ p.label = .backdoor) ∨
         (p.dest ≠ adv_id ∧ p.label = .input ∧ protocol.is_main_machine p.dest)
-  adv_corruption_within_protocol :
-    adversary.corruption_set ⊆ (machine_ids protocol.machines).toFinset
+  corruption_allowed :
+    corrupted_parties ⊆ protocol.corruptible_machines
   adv_port_destinations_restricted :
     ∀ p ∈ adversary.machine.communication_set,
-      p.dest ∈ adversary.corruption_set ∪ {env_id}
+      p.dest = env_id
 
 namespace ExecutionSetup
 
@@ -77,27 +72,31 @@ def protocol_comm_set {Payload : Type u} {π : Protocol Payload}
   | some m => m.2.communication_set
   | none => ∅
 
-/-- 若 `mid` 被腐化，则它到 adversary 的运行时 backdoor 端口。 -/
+/-- protocol machine 到 adversary 的运行时 backdoor 端口。 -/
 def backdoor_port_to_adversary {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
     (_setup : ExecutionSetup π A E) (mid : MachineId) : Option CommPort :=
-  if _h_mem : mid ∈ A.corruption_set then
-    if h_ne : mid ≠ adv_id then
-      some (mk_backdoor_port mid adv_id h_ne (Or.inr rfl))
-    else
-      none
+  if h_mem : mid ∈ machine_ids π.machines then
+    some <|
+      mk_backdoor_port mid adv_id
+        (by
+          intro h_eq
+          exact π.adv_separated (by simpa [h_eq] using h_mem))
+        (Or.inr rfl)
   else
     none
 
-/-- adversary 到某个被腐化 machine 的运行时 backdoor 端口。 -/
+/-- adversary 到 protocol machine 的运行时 backdoor 端口。 -/
 def backdoor_port_from_adversary {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
     (_setup : ExecutionSetup π A E) (mid : MachineId) : Option CommPort :=
-  if _h_mem : mid ∈ A.corruption_set then
-    if h_ne : adv_id ≠ mid then
-      some (mk_backdoor_port adv_id mid h_ne (Or.inl rfl))
-    else
-      none
+  if h_mem : mid ∈ machine_ids π.machines then
+    some <|
+      mk_backdoor_port adv_id mid
+        (by
+          intro h_eq
+          exact π.adv_separated (by simpa [← h_eq] using h_mem))
+        (Or.inl rfl)
   else
     none
 
@@ -136,10 +135,10 @@ noncomputable def runtime_communication_set {Payload : Type u} {π : Protocol Pa
     E.machine.communication_set ∪ env_input_ports
   else if _h_adv : sender_id = adv_id then
     let base := A.machine.communication_set
-    let extra :=
-      A.corruption_set.toList.filterMap fun mid =>
+    let backdoor_ports :=
+      (machine_ids π.machines).filterMap fun mid =>
         setup.backdoor_port_from_adversary mid
-    base ∪ extra.toFinset
+    base ∪ backdoor_ports.toFinset
   else
     let base := setup.protocol_comm_set sender_id
     match setup.backdoor_port_to_adversary sender_id with
@@ -174,6 +173,15 @@ def sender_source_valid {Payload : Type u}
     (sender_id : MachineId) (envelope : Envelope Payload) : Prop :=
   envelope.message.source = some sender_id
 
+/-- core 层检查腐化指令是否越过固定 static corruption set。 -/
+def corruption_instruction_valid {Payload : Type u} {π : Protocol Payload}
+    {A : Adversary Payload} {E : Environment Payload}
+    (_setup : ExecutionSetup π A E) (envelope : Envelope Payload) : Prop :=
+  match envelope.message.instruction with
+  | .plain => True
+  | .corrupt pid =>
+      envelope.message.label = .backdoor ∧ pid ∈ _setup.corrupted_parties
+
 /-- 当前发送者发出的消息是否满足 controller 的运行时检查。 -/
 def outgoing_message_valid {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
@@ -181,6 +189,7 @@ def outgoing_message_valid {Payload : Type u} {π : Protocol Payload}
     (sender_id : MachineId) (envelope : Envelope Payload) : Prop :=
   envelope.port.owner = sender_id ∧
     envelope.port ∈ setup.runtime_communication_set sender_id ∧
+    setup.corruption_instruction_valid envelope ∧
     (if _h_env : sender_id = env_id then
       setup.environment_source_valid envelope
     else
@@ -198,10 +207,17 @@ namespace ProtocolMachineState
 
 /-- 从异质 machine 初始化运行时状态。 -/
 def of_any_machine {Payload : Type u}
-    (m : AnyMachine Payload) : ProtocolMachineState Payload :=
+    (m : AnyMachine Payload) (n : ℕ) : ProtocolMachineState Payload :=
   { Out := m.1
     machine := m.2
-    state := m.2.program.init }
+    state := m.2.program.init n }
+
+/-- 从 protocol 提供的异质 machine state 初始化运行时状态。 -/
+def of_any_machine_state {Payload : Type u}
+    (st : AnyMachineState Payload) : ProtocolMachineState Payload :=
+  { Out := st.1.1
+    machine := st.1.2
+    state := st.2 }
 
 /-- 运行时状态对应的 machine identity。 -/
 def id {Payload : Type u} (st : ProtocolMachineState Payload) : MachineId :=
@@ -219,7 +235,8 @@ noncomputable def resume {Payload : Type u}
     PMF (ProtocolMachineState Payload × Option (Envelope Payload)) :=
   (st.machine.program.resume st.state).bind fun result =>
     PMF.pure
-      ({ Out := st.Out, machine := st.machine, state := result.state }, result.outgoing?)
+      ({ Out := st.Out, machine := st.machine, state := result.state },
+        result.outgoing?)
 
 end ProtocolMachineState
 
@@ -248,10 +265,20 @@ inductive ExitStatus where
 /-- 初始 controller 状态：所有 machine 都处于初始局部状态，先激活环境。 -/
 def initial_state {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
-    (setup : ExecutionSetup π A E) : ControllerState setup where
-  env_state := E.machine.program.init
-  adv_state := A.machine.program.init
-  protocol_states := π.machines.map ProtocolMachineState.of_any_machine
+    (setup : ExecutionSetup π A E) (n : ℕ) : ControllerState setup where
+  env_state := E.machine.program.init n
+  adv_state := A.machine.program.init n
+  protocol_states := π.machines.map (fun m => ProtocolMachineState.of_any_machine m n)
+  active_id := env_id
+
+/-- 使用 protocol 提供的初始 machine states 构造 controller 状态。 -/
+def initial_state_with_protocol_states {Payload : Type u} {π : Protocol Payload}
+    {A : Adversary Payload} {E : Environment Payload}
+    (setup : ExecutionSetup π A E) (n : ℕ)
+    (protocol_states : List (AnyMachineState Payload)) : ControllerState setup where
+  env_state := E.machine.program.init n
+  adv_state := A.machine.program.init n
+  protocol_states := protocol_states.map ProtocolMachineState.of_any_machine_state
   active_id := env_id
 
 /-- 查找某个 protocol machine 的当前运行时状态。 -/
@@ -357,6 +384,93 @@ noncomputable def handle_outgoing {Payload : Type u} {π : Protocol Payload}
       else
         exact PMF.pure { st with active_id := env_id }
 
+/-- If a machine pauses without an outgoing message, control returns to the environment. -/
+theorem handle_outgoing_none {Payload : Type u} {π : Protocol Payload}
+    {A : Adversary Payload} {E : Environment Payload}
+    (setup : ExecutionSetup π A E)
+    (st : ControllerState setup) (sender_id : MachineId) :
+    handle_outgoing setup st sender_id none =
+      PMF.pure { st with active_id := env_id } := by
+  simp [handle_outgoing]
+
+/-- A valid outgoing envelope is routed by the controller. -/
+theorem handle_outgoing_some_valid {Payload : Type u} {π : Protocol Payload}
+    {A : Adversary Payload} {E : Environment Payload}
+    (setup : ExecutionSetup π A E)
+    (st : ControllerState setup) (sender_id : MachineId)
+    (msg : Envelope Payload)
+    (h_valid : setup.outgoing_message_valid sender_id msg) :
+    handle_outgoing setup st sender_id (some msg) =
+      PMF.pure (route_envelope setup st sender_id msg) := by
+  simp [handle_outgoing, h_valid]
+
+/-- An invalid outgoing envelope is dropped and control returns to the environment. -/
+theorem handle_outgoing_some_invalid {Payload : Type u} {π : Protocol Payload}
+    {A : Adversary Payload} {E : Environment Payload}
+    (setup : ExecutionSetup π A E)
+    (st : ControllerState setup) (sender_id : MachineId)
+    (msg : Envelope Payload)
+    (h_invalid : ¬ setup.outgoing_message_valid sender_id msg) :
+    handle_outgoing setup st sender_id (some msg) =
+      PMF.pure { st with active_id := env_id } := by
+  simp [handle_outgoing, h_invalid]
+
+/--
+If an envelope is addressed to a protocol machine, routing delivers it to that
+machine rather than to the environment or adversary.
+-/
+theorem route_envelope_to_protocol_machine {Payload : Type u} {π : Protocol Payload}
+    {A : Adversary Payload} {E : Environment Payload}
+    (setup : ExecutionSetup π A E)
+    (st : ControllerState setup) (sender_id : MachineId)
+    (msg : Envelope Payload)
+    (h_system : setup.routes_to_system_machine msg.port.dest)
+    (h_not_env : msg.port.dest ≠ env_id)
+    (h_not_adv : msg.port.dest ≠ adv_id) :
+    route_envelope setup st sender_id msg =
+      deliver_to_protocol_machine st msg.port.dest msg := by
+  have h_not_env_zero : msg.port.dest ≠ 0 := by
+    simpa [env_id] using h_not_env
+  have h_not_adv_one : msg.port.dest ≠ 1 := by
+    simpa [adv_id] using h_not_adv
+  simp [route_envelope, h_system, h_not_env_zero, h_not_adv_one]
+
+/--
+If a non-environment protocol machine sends a subroutine output to one of the
+protocol's external identities, the controller delivers that message back to
+the environment.
+-/
+theorem route_envelope_to_external_identity {Payload : Type u} {π : Protocol Payload}
+    {A : Adversary Payload} {E : Environment Payload}
+    (setup : ExecutionSetup π A E)
+    (st : ControllerState setup) (sender_id : MachineId)
+    (msg : Envelope Payload)
+    (h_not_system : ¬ setup.routes_to_system_machine msg.port.dest)
+    (h_sender : sender_id ≠ env_id)
+    (h_external : setup.routes_to_external_identity msg.port.dest)
+    (h_label : msg.message.label = .subroutineOutput) :
+    route_envelope setup st sender_id msg =
+      deliver_to_environment st msg := by
+  have h_sender_zero : sender_id ≠ 0 := by
+    simpa [env_id] using h_sender
+  simp [route_envelope, h_not_system, h_sender_zero, h_external, h_label]
+
+/--
+If the destination protocol-machine state is present, delivery updates only
+that local state and makes it active.
+-/
+theorem deliver_to_protocol_machine_of_find {Payload : Type u} {π : Protocol Payload}
+    {A : Adversary Payload} {E : Environment Payload}
+    {setup : ExecutionSetup π A E}
+    (st : ControllerState setup) (mid : MachineId)
+    (msg : Envelope Payload)
+    (target : ProtocolMachineState Payload)
+    (h_find : find_protocol_state? st mid = some target) :
+    deliver_to_protocol_machine st mid msg =
+      { (replace_protocol_state st (ProtocolMachineState.receive target msg.message)) with
+        active_id := mid } := by
+  simp [deliver_to_protocol_machine, h_find]
+
 /-- 激活环境一次。 -/
 noncomputable def step_environment {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
@@ -389,6 +503,66 @@ noncomputable def step_protocol_machine {Payload : Type u} {π : Protocol Payloa
       (ProtocolMachineState.resume machine_state).bind fun result =>
         let st' := replace_protocol_state st result.1
         handle_outgoing setup st' mid result.2
+
+/--
+If the active protocol machine is found and its local resume distribution is a
+pure result, one controller protocol step is exactly the corresponding
+`handle_outgoing` call.
+-/
+theorem step_protocol_machine_of_find_resume {Payload : Type u} {π : Protocol Payload}
+    {A : Adversary Payload} {E : Environment Payload}
+    (setup : ExecutionSetup π A E)
+    (st : ControllerState setup) (mid : MachineId)
+    (machine_state new_state : ProtocolMachineState Payload)
+    (outgoing? : Option (Envelope Payload))
+    (h_find : find_protocol_state? st mid = some machine_state)
+    (h_resume :
+      ProtocolMachineState.resume machine_state =
+        PMF.pure (new_state, outgoing?)) :
+    step_protocol_machine setup st mid =
+      handle_outgoing setup (replace_protocol_state st new_state) mid outgoing? := by
+  simp [step_protocol_machine, h_find, h_resume]
+
+/--
+Specialized form of `step_protocol_machine_of_find_resume` for the common case
+where the resumed machine emits a valid envelope.
+-/
+theorem step_protocol_machine_of_find_resume_some_valid
+    {Payload : Type u} {π : Protocol Payload}
+    {A : Adversary Payload} {E : Environment Payload}
+    (setup : ExecutionSetup π A E)
+    (st : ControllerState setup) (mid : MachineId)
+    (machine_state new_state : ProtocolMachineState Payload)
+    (msg : Envelope Payload)
+    (h_find : find_protocol_state? st mid = some machine_state)
+    (h_resume :
+      ProtocolMachineState.resume machine_state =
+        PMF.pure (new_state, some msg))
+    (h_valid : setup.outgoing_message_valid mid msg) :
+    step_protocol_machine setup st mid =
+      PMF.pure (route_envelope setup (replace_protocol_state st new_state) mid msg) := by
+  rw [step_protocol_machine_of_find_resume setup st mid machine_state new_state (some msg)
+    h_find h_resume]
+  exact handle_outgoing_some_valid setup (replace_protocol_state st new_state) mid msg h_valid
+
+/--
+Specialized form of `step_protocol_machine_of_find_resume` for a pause without
+an outgoing envelope.
+-/
+theorem step_protocol_machine_of_find_resume_none {Payload : Type u} {π : Protocol Payload}
+    {A : Adversary Payload} {E : Environment Payload}
+    (setup : ExecutionSetup π A E)
+    (st : ControllerState setup) (mid : MachineId)
+    (machine_state new_state : ProtocolMachineState Payload)
+    (h_find : find_protocol_state? st mid = some machine_state)
+    (h_resume :
+      ProtocolMachineState.resume machine_state =
+        PMF.pure (new_state, none)) :
+    step_protocol_machine setup st mid =
+      PMF.pure { (replace_protocol_state st new_state) with active_id := env_id } := by
+  rw [step_protocol_machine_of_find_resume setup st mid machine_state new_state none
+    h_find h_resume]
+  exact handle_outgoing_none setup (replace_protocol_state st new_state) mid
 
 /-- controller 的单步调度。 -/
 noncomputable def step {Payload : Type u} {π : Protocol Payload}
@@ -450,19 +624,21 @@ controller 不用它限制 machine 的多项式运行时间。
 noncomputable def exec {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
     (setup : ExecutionSetup π A E) : Ensemble Bool :=
-  fun _n =>
-    (run_steps setup LeanCryptoProtocols.max_controller_steps
-        (initial_state setup)).bind fun st =>
-      PMF.pure (environment_output st)
+  fun n =>
+    (π.initial_states n).bind fun protocol_states =>
+      (run_steps setup LeanCryptoProtocols.max_controller_steps
+          (initial_state_with_protocol_states setup n protocol_states)).bind fun st =>
+        PMF.pure (environment_output st)
 
 /-- Controller 输出及退出原因。用于可执行 harness 检查预算耗尽。 -/
 noncomputable def exec_with_status {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
     (setup : ExecutionSetup π A E) : Ensemble (Bool × ExitStatus) :=
-  fun _n =>
-    (run_steps_with_status setup LeanCryptoProtocols.max_controller_steps
-        (initial_state setup)).bind fun result =>
-      PMF.pure (environment_output result.1, result.2)
+  fun n =>
+    (π.initial_states n).bind fun protocol_states =>
+      (run_steps_with_status setup LeanCryptoProtocols.max_controller_steps
+          (initial_state_with_protocol_states setup n protocol_states)).bind fun result =>
+        PMF.pure (environment_output result.1, result.2)
 
 /-- Controller 预算耗尽时给命令行 wrapper 使用的提示。 -/
 def budget_exceeded_warning : String :=
@@ -477,6 +653,23 @@ def budget_exceeded_warning : String :=
 def warn_if_budget_exceeded : ExitStatus → IO Unit
   | .halted => pure ()
   | .budget_exceeded => IO.eprintln budget_exceeded_warning
+
+/--
+Controller 执行保持 PPT 的通用闭包接口。
+
+若 adversary 与 environment 是 PPT，并且 reduction 只是在每个挑战样本下
+构造一个完整的 controller setup 后运行 controller，那么得到的 uniform
+distinguisher 仍是 PPT。该接口只记录复杂度闭包，不断言任何执行等价、
+概率界或密码学安全结论。
+-/
+axiom ppt_controller_distinguisher
+    {α : Type v} {Payload : Type u}
+    {π : α → Protocol Payload}
+    {A : Adversary Payload}
+    {E : Environment Payload}
+    (setup : ∀ x, ExecutionSetup (π x) A E) :
+    PPT A → PPT E →
+      PPT ({ run := fun x n => Controller.exec (setup x) n } : Distinguisher α)
 
 end Controller
 

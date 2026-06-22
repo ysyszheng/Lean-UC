@@ -1,19 +1,50 @@
 % This file makes a printable version of the blueprint.
 
-\documentclass[a4paper,12pt]{article}
+\documentclass[a4paper,11pt]{article}
 
-\usepackage{geometry}
+\usepackage[a4paper, margin=1in]{geometry}
 \usepackage{expl3}
 \usepackage{amssymb, amsthm, mathtools}
-\usepackage[unicode,colorlinks=true,linkcolor=blue,urlcolor=magenta,citecolor=blue]{hyperref}
-\usepackage{fontspec}
 \usepackage{xcolor}
+\definecolor{AUXLblue}{RGB}{51,145,202}
+\definecolor{AUXLred}{RGB}{219,72,72}
+% \usepackage[unicode,colorlinks=true,linkcolor=blue,urlcolor=magenta,citecolor=blue]{hyperref}
+\usepackage[unicode,
+            colorlinks=true,
+            linkcolor=AUXLblue,
+            anchorcolor=AUXLblue,
+            citecolor=AUXLred,
+            urlcolor=AUXLblue,
+            ]{hyperref}
+\usepackage{url}
+\usepackage[capitalize, nameinlink, noabbrev]{cleveref}
+\usepackage{fontspec}
 \usepackage[warnings-off={mathtools-colon,mathtools-overbracket}]{unicode-math}
 
-\setmainfont{Times New Roman}
-\setsansfont{Arial}
-\setmonofont{Courier New}
-\setmathfont{STIX Two Math}
+\setmainfont[
+  Path=/usr/local/texlive/2022/texmf-dist/fonts/opentype/public/lm/,
+  UprightFont=lmroman10-regular.otf,
+  BoldFont=lmroman10-bold.otf,
+  ItalicFont=lmroman10-italic.otf,
+  BoldItalicFont=lmroman10-bolditalic.otf,
+]{lmroman10}
+\setsansfont[
+  Path=/usr/local/texlive/2022/texmf-dist/fonts/opentype/public/lm/,
+  UprightFont=lmsans10-regular.otf,
+  BoldFont=lmsans10-bold.otf,
+  ItalicFont=lmsans10-oblique.otf,
+  BoldItalicFont=lmsans10-boldoblique.otf,
+]{lmsans10}
+\setmonofont[
+  Path=/usr/local/texlive/2022/texmf-dist/fonts/opentype/public/lm/,
+  UprightFont=lmmono10-regular.otf,
+  BoldFont=lmmonolt10-bold.otf,
+  ItalicFont=lmmono10-italic.otf,
+  BoldItalicFont=lmmonolt10-boldoblique.otf,
+]{lmmono10}
+\setmathfont[
+  Path=/usr/local/texlive/2022/texmf-dist/fonts/opentype/public/lm-math/,
+]{latinmodern-math.otf}
 
 \input{macros/common}
 \input{macros/print}

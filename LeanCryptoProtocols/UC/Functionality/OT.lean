@@ -226,7 +226,8 @@ def receive_receiver (ids : OTIds) (st : State)
     | none =>
         { st with receiver_reqs := receiver_reqs }
 
-def receive (ids : OTIds) (st : State) (msg : Message OTPayload) : State :=
+def receive (ids : OTIds) (st : State) (msg : Message OTPayload) :
+    State :=
   match msg.source, msg.label, msg.payload with
   | some src, .input, .to_functionality _ (.sender_req sid ssid sender) =>
       if _h_src : src = ids.sender_id then
@@ -238,12 +239,16 @@ def receive (ids : OTIds) (st : State) (msg : Message OTPayload) : State :=
         receive_receiver ids st sid ssid choice
       else
         st
-  | _, _, _ => st
+  | _, _, _ =>
+      st
 
 noncomputable def resume (st : State) : PMF (ActivationResult OTPayload State) :=
   match st.pending_outgoing with
   | none =>
-      PMF.pure { state := st, outgoing? := none }
+      PMF.pure {
+        state := st
+        outgoing? := none
+      }
   | some envelope =>
       PMF.pure {
         state := { st with pending_outgoing := none }

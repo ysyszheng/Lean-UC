@@ -47,7 +47,7 @@ structure IdealFunctionality (Payload : Type u) where
     ∀ pid ∈ party_ids, ∀ ext ∈ party_external_ids pid,
       ext ≠ functionality_id ∧ ext ≠ env_id ∧ ext ≠ adv_id
   dummy_local_state : Type
-  dummy_init : dummy_local_state
+  dummy_init : ℕ → dummy_local_state
   dummy_receive : dummy_local_state → Message Payload → dummy_local_state
   dummy_pending : dummy_local_state → Option (Message Payload)
   dummy_clear : dummy_local_state → dummy_local_state
@@ -58,7 +58,8 @@ structure IdealFunctionality (Payload : Type u) where
       ∃ p ∈ machine.communication_set, p.dest = pid ∧ p.label = .subroutineOutput
   functionality_comm_constraints :
     ∀ p ∈ machine.communication_set,
-      p.dest ∈ party_ids.toFinset ∧ p.label = .subroutineOutput
+      (p.dest ∈ party_ids.toFinset ∧ p.label = .subroutineOutput) ∨
+        (p.dest = adv_id ∧ p.label = .backdoor)
 
 /--
 dummy party。
@@ -221,12 +222,15 @@ noncomputable def program {Payload : Type u} (f : IdealFunctionality Payload)
     MachineProgram Payload Unit where
   LocalState := f.dummy_local_state
   init := f.dummy_init
-  receive := f.dummy_receive
+  receive := fun st msg => f.dummy_receive st msg
   resume st :=
     let cleared := f.dummy_clear st
     match f.dummy_pending st with
     | none =>
-        PMF.pure { state := cleared, outgoing? := none }
+        PMF.pure {
+          state := cleared
+          outgoing? := none
+        }
     | some msg =>
         match msg.label with
         | .input =>
@@ -246,11 +250,17 @@ noncomputable def program {Payload : Type u} (f : IdealFunctionality Payload)
         | .subroutineOutput =>
             match f.unwrap_output msg.payload with
             | none =>
-                PMF.pure { state := cleared, outgoing? := none }
+                PMF.pure {
+                  state := cleared
+                  outgoing? := none
+                }
             | some (dest_id, payload') =>
                 match h_lookup : output_port f party_id h_party dest_id with
                 | none =>
-                    PMF.pure { state := cleared, outgoing? := none }
+                    PMF.pure {
+                      state := cleared
+                      outgoing? := none
+                    }
                 | some port =>
                     let out_msg : Message Payload := {
                       source := some party_id
@@ -275,7 +285,10 @@ noncomputable def program {Payload : Type u} (f : IdealFunctionality Payload)
                       }
                     }
         | .backdoor =>
-            PMF.pure { state := cleared, outgoing? := none }
+            PMF.pure {
+              state := cleared
+              outgoing? := none
+            }
   is_halted := fun _ => false
   output := fun _ => ()
 
@@ -330,21 +343,9 @@ noncomputable def mk_dummy_party {Payload : Type u}
     intro p hp h_backdoor
     rcases Finset.mem_insert.mp hp with hp | hp
     · subst hp
-      have hneq : (DummyPartyImpl.input_port f party_id h_party).label ≠ .backdoor := by
-        intro h
-        have h_eq : (DummyPartyImpl.input_port f party_id h_party).label = .backdoor := h
-        change PortLabel.input = PortLabel.backdoor at h_eq
-        cases h_eq
-      exact hneq h_backdoor
+      cases h_backdoor
     · rcases Finset.mem_image.mp hp with ⟨ext, _, rfl⟩
-      have hneq :
-          (DummyPartyImpl.output_port_of_member f party_id h_party ext).label ≠ .backdoor := by
-        intro h
-        have h_eq :
-            (DummyPartyImpl.output_port_of_member f party_id h_party ext).label = .backdoor := h
-        change PortLabel.subroutineOutput = PortLabel.backdoor at h_eq
-        cases h_eq
-      exact hneq h_backdoor
+      cases h_backdoor
   input_port_present := by
     refine ⟨DummyPartyImpl.input_port f party_id h_party, ?_, rfl, rfl⟩
     exact Finset.mem_insert_self _ _
@@ -391,6 +392,12 @@ private theorem mk_dummy_parties_map_party_id {Payload : Type u}
     (mk_dummy_parties f).map DummyParty.party_id = f.party_ids := by
   simpa [mk_dummy_parties] using
     mk_dummy_parties_aux_map_party_id f f.party_ids (fun pid h => h)
+
+/-- `mk_dummy_parties` 生成的 dummy party ids 恰好等于 `party_ids`。 -/
+theorem mk_dummy_parties_party_ids {Payload : Type u}
+    (f : IdealFunctionality Payload) :
+    (mk_dummy_parties f).map DummyParty.party_id = f.party_ids :=
+  mk_dummy_parties_map_party_id f
 
 private theorem mk_dummy_parties_mem_party_data {Payload : Type u}
     (f : IdealFunctionality Payload) {d : DummyParty Payload}
@@ -481,6 +488,7 @@ noncomputable def mk_ideal_protocol {Payload : Type u}
               rw [h_party_ids]
   let protocol : Protocol Payload := {
     machines := machines
+    corruptible_machines := ∅
     unique_ids := by
       rw [h_ids]
       simpa using f.party_ids_nodup.concat f.functionality_not_party
@@ -507,7 +515,9 @@ noncomputable def mk_ideal_protocol {Payload : Type u}
       · rcases List.mem_singleton.mp h_fun with rfl
         rcases h_caller with ⟨p, hp, _h_dest, h_label⟩
         have h_comm := f.functionality_comm_constraints p hp
-        simp [h_comm.2] at h_label
+        rcases h_comm with h_party | h_adv
+        · simp [h_party.2] at h_label
+        · simp [h_adv.2] at h_label
     subroutine_has_matching_caller := by
       intro m hm mid h_sub h_mid_mem
       have hm_cases := List.mem_append.mp hm
@@ -534,7 +544,19 @@ noncomputable def mk_ideal_protocol {Payload : Type u}
         rcases h_sub with ⟨p, hp, h_dest, _h_label⟩
         have h_comm := f.functionality_comm_constraints p hp
         have h_mid_party : mid ∈ f.party_ids := by
-          simpa [h_dest] using h_comm.1
+          rcases h_comm with h_party | h_adv
+          · simpa [h_dest] using h_party.1
+          · have h_mid_adv : mid = adv_id := by
+              simpa [h_dest] using h_adv.1
+            have : adv_id ∈ f.party_ids ++ [f.functionality_id] := by
+              simpa [h_ids, h_mid_adv] using h_mid_mem
+            have : False := by
+              rcases List.mem_append.mp this with h_adv_party | h_adv_fun
+              · exact f.parties_separated.2 h_adv_party
+              · have h_eq : adv_id = f.functionality_id := by
+                  simpa using h_adv_fun
+                exact f.functionality_separated.2 h_eq.symm
+            exact this.elim
         rcases exists_dummy_party_for_id f h_mid_party with ⟨d, hd, hd_id⟩
         have h_data := mk_dummy_parties_mem_party_data f hd
         rcases h_data with ⟨_h_party, h_func, _h_exts⟩
@@ -562,7 +584,7 @@ noncomputable def mk_ideal_protocol {Payload : Type u}
       · have h_eq : adv_id = f.functionality_id := by simpa using h_adv
         have h_eq' : f.functionality_id = adv_id := h_eq.symm
         exact f.functionality_separated.2 h_eq'
-    no_direct_env_or_adv_communication := by
+    no_direct_environment_communication := by
       intro m hm p hp
       have hm_cases := List.mem_append.mp hm
       rcases hm_cases with h_dummy | h_fun
@@ -572,25 +594,40 @@ noncomputable def mk_ideal_protocol {Payload : Type u}
         have h_comm := d.communication_constraints p hp
         rcases h_comm with h_in | h_out
         · rw [h_func] at h_in
-          exact ⟨by
-              simpa [h_in.1] using f.functionality_separated.1,
-            by
-              simpa [h_in.1] using f.functionality_separated.2,
-            by
-              simp [h_in.2]⟩
+          simpa [h_in.1] using f.functionality_separated.1
         · rw [h_exts] at h_out
           have h_sep := f.external_ids_separated d.party_id h_party p.dest h_out.1
-          exact ⟨h_sep.2.1, h_sep.2.2, by simp [h_out.2]⟩
+          exact h_sep.2.1
       · rcases List.mem_singleton.mp h_fun with rfl
         have h_comm := f.functionality_comm_constraints p hp
-        have h_dest_party : p.dest ∈ f.party_ids := by
-          simpa using h_comm.1
-        refine ⟨?_, ?_, ?_⟩
+        rcases h_comm with h_party | h_adv
         · intro h_eq
-          exact f.parties_separated.1 (by simpa [h_eq] using h_dest_party)
+          exact f.parties_separated.1 (by simpa [h_eq] using h_party.1)
         · intro h_eq
-          exact f.parties_separated.2 (by simpa [h_eq] using h_dest_party)
-        · simp [h_comm.2]
+          simp [h_adv.1, env_id, adv_id] at h_eq
+    adversary_communication_is_backdoor := by
+      intro m hm p hp h_dest
+      have hm_cases := List.mem_append.mp hm
+      rcases hm_cases with h_dummy | h_fun
+      · rcases List.mem_map.mp h_dummy with ⟨d, hd, rfl⟩
+        have h_data := mk_dummy_parties_mem_party_data f hd
+        rcases h_data with ⟨h_party, h_func, h_exts⟩
+        have h_comm := d.communication_constraints p hp
+        rcases h_comm with h_in | h_out
+        · rw [h_func] at h_in
+          have : f.functionality_id ≠ adv_id := f.functionality_separated.2
+          exact (this (by simpa [h_in.1] using h_dest)).elim
+        · rw [h_exts] at h_out
+          have h_sep := f.external_ids_separated d.party_id h_party p.dest h_out.1
+          exact (h_sep.2.2 h_dest).elim
+      · rcases List.mem_singleton.mp h_fun with rfl
+        have h_comm := f.functionality_comm_constraints p hp
+        rcases h_comm with h_party | h_adv
+        · have : False := by
+            have h_not_adv := f.parties_separated.2
+            exact h_not_adv (by simpa [h_dest] using h_party.1)
+          exact this.elim
+        · simpa [h_adv.1] using h_adv.2
   }
   exact {
     protocol := protocol
@@ -598,5 +635,120 @@ noncomputable def mk_ideal_protocol {Payload : Type u}
     dummy_parties := dummies
     machines_eq := rfl
   }
+
+/-- `mk_ideal_protocol` 的 machine ids 恰好是 `party_ids ++ [functionality_id]`。 -/
+theorem mk_ideal_protocol_machine_ids {Payload : Type u}
+    (f : IdealFunctionality Payload) :
+    machine_ids (mk_ideal_protocol f).protocol.machines =
+      f.party_ids ++ [f.functionality_id] := by
+  unfold mk_ideal_protocol
+  let dummies := mk_dummy_parties f
+  let machines : List (AnyMachine Payload) :=
+    dummies.map DummyParty.to_any_machine ++ [⟨Unit, f.machine⟩]
+  have hdummy_ids :
+      machine_ids (dummies.map DummyParty.to_any_machine) =
+        dummies.map DummyParty.party_id := by
+    induction dummies with
+    | nil => rfl
+    | cons d rest ih =>
+        simp [machine_ids, dummy_to_any_machine_id]
+  have h_party_ids :
+      dummies.map DummyParty.party_id = f.party_ids := by
+    simp [dummies, mk_dummy_parties_party_ids]
+  calc
+    machine_ids machines
+        =
+          machine_ids (dummies.map DummyParty.to_any_machine) ++
+            [AnyMachine.id ⟨Unit, f.machine⟩] := by
+            simp [machines, machine_ids]
+    _ = dummies.map DummyParty.party_id ++ [f.functionality_id] := by
+            simp [hdummy_ids, AnyMachine.id, f.id_matches]
+    _ = f.party_ids ++ [f.functionality_id] := by
+            rw [h_party_ids]
+
+/-- `mk_ideal_protocol` 中的 machine identities 正好是 dummy parties 与功能机。 -/
+theorem mk_ideal_protocol_has_machine_id_iff {Payload : Type u}
+    (f : IdealFunctionality Payload) (mid : MachineId) :
+    (mk_ideal_protocol f).protocol.has_machine_id mid ↔
+      mid ∈ f.party_ids ∨ mid = f.functionality_id := by
+  classical
+  simp [Protocol.has_machine_id, mk_ideal_protocol_machine_ids]
+
+/-- 自动生成的 ideal protocol 中，dummy party identities 正好是 main machines。 -/
+theorem mk_ideal_protocol_is_main_machine_iff {Payload : Type u}
+    (f : IdealFunctionality Payload) (mid : MachineId) :
+    (mk_ideal_protocol f).protocol.is_main_machine mid ↔
+      mid ∈ f.party_ids := by
+  classical
+  constructor
+  · intro h_main
+    rcases h_main with ⟨m, hm, h_id, ext_id, h_ext⟩
+    rcases h_ext with ⟨hm_ext, h_sub, h_external⟩
+    have h_machines := (mk_ideal_protocol f).machines_eq
+    rw [h_machines] at hm
+    rcases List.mem_append.mp hm with h_dummy | h_functionality
+    · rcases List.mem_map.mp h_dummy with ⟨d, hd, rfl⟩
+      have h_data := mk_dummy_parties_mem_party_data f hd
+      rcases h_data with ⟨h_party, _h_func, _h_exts⟩
+      rw [← h_id]
+      simpa [dummy_to_any_machine_id] using h_party
+    · rcases List.mem_singleton.mp h_functionality with rfl
+      rcases h_sub with ⟨p, hp, h_dest, h_label⟩
+      have h_comm := f.functionality_comm_constraints p hp
+      rcases h_comm with h_party | h_adv
+      · have h_ext_mem : ext_id ∈ machine_ids (mk_ideal_protocol f).protocol.machines := by
+          rw [mk_ideal_protocol_machine_ids]
+          exact List.mem_append.mpr (Or.inl (by simpa [h_dest] using h_party.1))
+        exact (h_external h_ext_mem).elim
+      · simp [h_adv.2] at h_label
+  · intro h_party
+    rcases exists_dummy_party_for_id f h_party with ⟨d, hd, hd_id⟩
+    have h_data := mk_dummy_parties_mem_party_data f hd
+    rcases h_data with ⟨h_d_party, _h_func, h_exts⟩
+    rcases f.external_ids_nonempty d.party_id (by simpa [hd_id] using h_party) with
+      ⟨ext_id, h_ext_id⟩
+    rcases d.external_ports_complete ext_id (by simpa [h_exts] using h_ext_id) with
+      ⟨p, hp, h_dest, h_label⟩
+    refine ⟨d.to_any_machine, ?_, ?_, ext_id, ?_⟩
+    · rw [(mk_ideal_protocol f).machines_eq]
+      exact List.mem_append.mpr <| Or.inl (List.mem_map.mpr ⟨d, hd, rfl⟩)
+    · simpa [dummy_to_any_machine_id] using hd_id
+    · refine ⟨?_, ⟨p, hp, h_dest, h_label⟩, ?_⟩
+      · rw [(mk_ideal_protocol f).machines_eq]
+        exact List.mem_append.mpr <| Or.inl (List.mem_map.mpr ⟨d, hd, rfl⟩)
+      · intro h_ext_machine
+        rw [mk_ideal_protocol_machine_ids] at h_ext_machine
+        rcases List.mem_append.mp h_ext_machine with h_ext_party | h_ext_func
+        · exact
+            (f.external_ids_outside_parties d.party_id h_d_party ext_id
+              (by simpa [h_exts] using h_ext_id)) h_ext_party
+        · have h_ext_func_eq : ext_id = f.functionality_id := by
+            simpa using h_ext_func
+          exact
+            ((f.external_ids_separated d.party_id h_d_party ext_id
+              (by simpa [h_exts] using h_ext_id)).1 h_ext_func_eq)
+
+/-- 自动生成的 ideal protocol 中，唯一 internal machine 是理想功能机。 -/
+theorem mk_ideal_protocol_is_internal_machine_iff {Payload : Type u}
+    (f : IdealFunctionality Payload) (mid : MachineId) :
+    (mk_ideal_protocol f).protocol.is_internal_machine mid ↔
+      mid = f.functionality_id := by
+  classical
+  constructor
+  · intro h_internal
+    rcases h_internal with ⟨h_has, h_not_main⟩
+    rcases (mk_ideal_protocol_has_machine_id_iff f mid).1 h_has with
+      h_party | h_func
+    · exact (h_not_main
+        ((mk_ideal_protocol_is_main_machine_iff f mid).2 h_party)).elim
+    · exact h_func
+  · intro h_eq
+    refine ⟨?_, ?_⟩
+    · exact (mk_ideal_protocol_has_machine_id_iff f mid).2 (Or.inr h_eq)
+    · intro h_main
+      have h_party :=
+        (mk_ideal_protocol_is_main_machine_iff f mid).1 h_main
+      rw [h_eq] at h_party
+      exact f.functionality_not_party h_party
 
 end LeanCryptoProtocols.UC

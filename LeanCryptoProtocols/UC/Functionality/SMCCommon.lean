@@ -6,7 +6,7 @@ import LeanCryptoProtocols.UC.IdealWorld
 本文件集中放置 EasyUC 的 secure message communication case study
 需要共用的：
 
-- 会话标识；
+- SMC 会话标识；
 - 网络消息；
 - `Forw` / `KE` / `SMC` 的业务消息；
 - 在当前 ideal-world builder 下统一使用的 payload 类型。
@@ -16,11 +16,8 @@ namespace LeanCryptoProtocols.UC.Functionality
 
 open LeanCryptoProtocols.UC
 
-/-- protocol session identifier。 -/
+/-- SMC protocol session identifier。 -/
 abbrev Sid : Type := Nat
-
-/-- 某个 protocol session 内的子会话标识。 -/
-abbrev Ssid : Type := Nat
 
 /-- case study 里用到的抽象群元素消息。 -/
 structure GroupElement where
@@ -77,40 +74,40 @@ theorem dec_enc (k : SharedKey) (m : Plaintext) : dec k (enc k m) = m := by
 
 /-- 通过 `Forw` 转发的网络级消息。 -/
 inductive NetworkBody where
-  | ke_first (sid : Sid) (ssid : Ssid) (share : GroupElement)
-  | ke_second (sid : Sid) (ssid : Ssid) (share : GroupElement)
+  | ke_first (share : GroupElement)
+  | ke_second (share : GroupElement)
   | smc_cipher (sid : Sid) (cipher : Ciphertext)
   deriving Repr, DecidableEq
 
 /-- `Forw` 的业务消息。 -/
 inductive ForwBody where
   | submit
-      (sid : Sid)
       (sender_id receiver_id : MachineId)
       (payload : NetworkBody)
   | observe
-      (sid : Sid)
       (sender_id receiver_id : MachineId)
       (payload : NetworkBody)
-  | release (sid : Sid)
+  | release
   | delivered
-      (sid : Sid)
       (sender_id receiver_id : MachineId)
       (payload : NetworkBody)
   deriving Repr, DecidableEq
 
 /-- `KE` 的业务消息。 -/
 inductive KEBody where
-  | init (sid : Sid) (ssid : Ssid)
-  | confirm (sid : Sid) (ssid : Ssid)
+  | init
+  | confirm
   | observe_init
-      (sid : Sid)
-      (ssid : Ssid)
       (initiator_id responder_id : MachineId)
-  | observe_confirm (sid : Sid) (ssid : Ssid)
-  | release_init (sid : Sid) (ssid : Ssid)
-  | release_confirm (sid : Sid) (ssid : Ssid)
-  | key (sid : Sid) (ssid : Ssid) (shared_key : SharedKey)
+  | observe_init_share
+      (initiator_id responder_id : MachineId)
+      (first_share : GroupElement)
+  | observe_confirm
+  | observe_confirm_share
+      (second_share : GroupElement)
+  | release_init
+  | release_confirm
+  | key (shared_key : SharedKey)
   deriving Repr, DecidableEq
 
 /-- `SMC` 的业务消息。 -/

@@ -1,0 +1,627 @@
+% !TeX root = ../print.tex
+\section{UC Core Model}
+
+\newcommand{\leanid}[1]{\texttt{#1}}
+\newcommand{\Mid}{\mathsf{MachineId}}
+\newcommand{\EnvId}{\mathsf{env\_id}}
+\newcommand{\AdvId}{\mathsf{adv\_id}}
+\newcommand{\Msg}{\mathsf{Message}}
+\newcommand{\Instr}{\mathsf{MessageInstruction}}
+\newcommand{\Envlp}{\mathsf{Envelope}}
+\newcommand{\Port}{\mathsf{CommPort}}
+\newcommand{\Pay}{\mathsf{Payload}}
+\newcommand{\Ctrl}{\mathsf{Controller}}
+\newcommand{\Run}{\mathsf{Run}}
+\newcommand{\ProbOne}{\mathsf{probTrue}}
+\newcommand{\ExecDiff}{\mathsf{execDiff}}
+\newcommand{\Setup}{\mathsf{ExecutionSetup}}
+\newcommand{\IdealFunc}{\mathsf{IdealFunctionality}}
+\newcommand{\DummyParty}{\mathsf{DummyParty}}
+\newcommand{\IdealProtocol}{\mathsf{IdealProtocol}}
+\newcommand{\UCEmulates}{\mathsf{UCEmulatesAt}}
+\newcommand{\UCRealizes}{\mathsf{UCRealizesAt}}
+\newcommand{\SecLevel}{\mathsf{SecurityLevel}}
+\newcommand{\Negl}{\mathsf{Negligible}}
+\newcommand{\PPTM}{\mathsf{PPT}}
+\newcommand{\Corr}{\mathsf{C}}
+\emergencystretch=4em
+
+This section describes the UC core used by the current Lean development.  It is
+not the EasyUC-paper interface: there are no hierarchical addresses
+\(\alpha,\beta\), no separate input guard \(G\), and no interface constructor
+\(\mathsf{MI}(F,A)\).  The active model is built from natural-number machine
+identities, explicit communication ports, audited execution setups, and the
+controller ensemble
+\[
+  \Ctrl.\leanid{exec}\; \sigma : \mathbb{N}\to\mathsf{PMF}\;\mathsf{Bool}.
+\]
+All definitions below are parametric in an arbitrary payload type \(\Pay\).
+
+\subsection{Machines and Communication Sets}
+
+\begin{definition}[Machine identities and ports]
+Machine identities are plain natural numbers:
+\[
+  \Mid=\mathbb{N}, \qquad \EnvId=0,\qquad \AdvId=1 .
+\]
+A communication port is a triple
+\[
+  p=(p.\leanid{owner},p.\leanid{dest},p.\leanid{label}) : \Port
+\]
+whose label is one of
+\[
+  \leanid{input},\qquad
+  \leanid{subroutineOutput},\qquad
+  \leanid{backdoor}.
+\]
+The proof field of \(\Port\) enforces
+\[
+\begin{aligned}
+  p.\leanid{owner} &\ne p.\leanid{dest},\\
+  p.\leanid{label}=\leanid{backdoor}
+    &\Longleftrightarrow
+      (p.\leanid{owner}=\AdvId\ \lor\ p.\leanid{dest}=\AdvId).
+\end{aligned}
+\]
+Thus adversarial communication is ordinary controller traffic through
+backdoor-labelled ports, not a second message-delivery mechanism.
+\end{definition}
+
+\begin{definition}[Messages and envelopes]
+A message carries a source identity, a label, a core instruction, and a
+payload:
+\[
+  m=(m.\leanid{source},m.\leanid{label},
+      m.\leanid{instruction},m.\leanid{payload})
+    : \Msg\;\Pay .
+\]
+The instruction is one of
+\[
+  m.\leanid{instruction}\in
+    \Instr=\{\leanid{plain},\ \leanid{corrupt}(pid)\}.
+\]
+The \(\leanid{plain}\) instruction covers ordinary protocol messages and
+ordinary adversarial control messages.  The instruction
+\(\leanid{corrupt}(pid)\) is an authorization-relevant request about the fixed
+static corruption identity \(pid\).  It is not a port label and it does not
+change which machine receives the envelope.  The core invariant is
+\[
+  m.\leanid{instruction}=\leanid{corrupt}(pid)
+  \Longrightarrow
+  m.\leanid{label}=\leanid{backdoor}.
+\]
+An envelope adds the destination port and proves that the port label agrees
+with the message label:
+\[
+  e=(e.\leanid{port},e.\leanid{message}) : \Envlp\;\Pay,
+  \qquad
+  e.\leanid{port.label}=e.\leanid{message.label}.
+\]
+The destination identity is therefore read from the port, while the source
+identity is stored inside the message.  This source field is not trusted by
+itself; nevertheless, messages produced by honest machines normally set it to
+their own identity when the protocol requires that convention.
+\end{definition}
+
+\begin{definition}[Machine programs]
+A machine is
+\[
+  \mu=(\mu.\leanid{id},\mu.\leanid{communication\_set},
+      \mu.\leanid{program}) : \leanid{Machine}\;\Pay\;O .
+\]
+The local program supplies an initial state sampler indexed by the security
+parameter, a receive transition, a resume distribution, a halt predicate, and
+an output function:
+\[
+\begin{array}{rcl}
+\leanid{init} &:& \mathbb{N}\to \leanid{LocalState},\\
+\leanid{receive} &:&
+  \leanid{LocalState}\to \Msg\;\Pay\to \leanid{LocalState},\\
+\leanid{resume} &:&
+  \leanid{LocalState}\to
+    \mathsf{PMF}\;(\leanid{ActivationResult}\;\Pay),\\
+\leanid{is\_halted} &:& \leanid{LocalState}\to\mathsf{Bool},\\
+\leanid{output} &:& \leanid{LocalState}\to O .
+\end{array}
+\]
+One activation can emit at most one envelope.  A machine is well formed only if
+every port in its communication set has owner \(\mu.\leanid{id}\), and the
+machine has at most one port to each destination identity.  Hence the
+communication set is a static, proof-carrying send capability list.
+\end{definition}
+
+\subsection{Protocols}
+
+\begin{definition}[Protocol shape]
+A protocol is a proof-carrying collection of machines:
+\[
+  \pi : \leanid{Protocol}\;\Pay .
+\]
+It contains
+\[
+\begin{array}{ll}
+\pi.\leanid{machines} &: \hbox{the protocol machines},\\
+\pi.\leanid{initial\_states} &: \mathbb{N}\to
+  \mathsf{PMF}\;(\mathsf{List}\;\leanid{AnyMachineState}),\\
+\pi.\leanid{corruptible\_machines} &: \hbox{the static corruption universe}.
+\end{array}
+\]
+The field \(\pi.\leanid{corruptible\_machines}\) is only the set of machine
+identities that an execution setup may choose as statically corrupted.  It is
+not a global visibility set and it does not by itself grant the adversary any
+extra payload semantics.  The protocol proves
+\[
+  \pi.\leanid{corruptible\_machines}
+    \subseteq \leanid{machine\_ids}\;\pi.\leanid{machines}.
+\]
+The remaining fields are static obligations.  Machine identities must be
+unique; \(\EnvId\) and \(\AdvId\) must not occur in the protocol; direct sends
+to \(\EnvId\) are forbidden; and every protocol port whose destination is
+\(\AdvId\) must be a backdoor port.
+\end{definition}
+
+\begin{definition}[Call graph relations]
+The protocol file defines caller and subroutine relations from ports:
+\[
+\begin{array}{rcl}
+\leanid{is\_caller\_of\_id}\;\mu\;j
+  &\Longleftrightarrow&
+  \mu \hbox{ has an } \leanid{input} \hbox{ port to } j,\\
+\leanid{is\_subroutine\_of\_id}\;\mu\;j
+  &\Longleftrightarrow&
+  \mu \hbox{ has a } \leanid{subroutineOutput} \hbox{ port to } j.
+\end{array}
+\]
+The fields \(\leanid{caller\_has\_matching\_subroutine}\) and
+\(\leanid{subroutine\_has\_matching\_caller}\) ensure that internal protocol
+calls are bidirectionally justified.  The derived predicates
+\(\pi.\leanid{is\_main\_machine}\), \(\pi.\leanid{is\_internal\_machine}\), and
+\(\pi.\leanid{is\_external\_identity\_of}\) are the predicates used by the
+controller when it validates environment calls and routes outputs back to the
+environment.
+\end{definition}
+
+\begin{definition}[Environment, adversary, and execution setup]
+The environment and adversary are machines with fixed identities:
+\[
+  E : \leanid{Environment}\;\Pay,\qquad
+  A : \leanid{Adversary}\;\Pay .
+\]
+The environment has identity \(\EnvId\) and a unique backdoor port to
+\(\AdvId\).  The adversary has identity \(\AdvId\), a unique backdoor port to
+\(\EnvId\), and no intrinsic corruption field.  A simulator is definitionally
+an adversary machine:
+\[
+  \leanid{Simulator}\;\Pay := \leanid{Adversary}\;\Pay .
+\]
+For a concrete triple \((\pi,A,E)\), legal execution requires an audited setup
+\[
+  \sigma : \leanid{ExecutionSetup}\;\pi\;A\;E .
+\]
+This object replaces the old input guard and records the static corruption
+pattern for this execution:
+\[
+  \sigma.\leanid{corrupted\_parties} : \mathsf{Finset}\;\Mid .
+\]
+The setup proves
+\[
+  \sigma.\leanid{corrupted\_parties}
+    \subseteq \pi.\leanid{corruptible\_machines}.
+\]
+It also proves that the environment can only call main machines or its
+adversary backdoor, and that the adversary's static communication-set ports
+only target the environment.  Adversary-to-protocol control ports are supplied
+by the runtime overlay described below, so the static adversary record does not
+encode either visibility or corruption authority.
+\end{definition}
+
+\subsection{Ideal Functionalities and Ideal Protocols}
+
+\begin{definition}[Ideal functionality]
+An ideal functionality is not merely a machine.  In Lean it is a record
+\[
+  f : \IdealFunc\;\Pay
+\]
+containing the functionality machine, the party identities, and the data needed
+to generate dummy parties automatically.  Its main fields are:
+\[
+\begin{array}{ll}
+f.\leanid{party\_ids} &: \mathsf{List}\;\Mid,\\
+f.\leanid{functionality\_id} &: \Mid,\\
+f.\leanid{machine} &: \leanid{Machine}\;\Pay\;\mathsf{Unit},\\
+f.\leanid{party\_external\_ids} &: \Mid\to\mathsf{Finset}\;\Mid,\\
+f.\leanid{wrap\_input} &: \mathsf{Option}\;\Mid\to\Pay\to\Pay,\\
+f.\leanid{unwrap\_output} &: \Pay\to
+  \mathsf{Option}\;(\Mid\times\Pay).
+\end{array}
+\]
+The proof fields separate parties, external identities, the functionality,
+\(\EnvId\), and \(\AdvId\).  They also constrain the functionality machine's
+communication set: it may send subroutine outputs to parties and backdoor
+messages to the adversary, but not arbitrary traffic.
+\end{definition}
+
+\begin{definition}[Automatically generated dummy parties]
+For each \(pid\in f.\leanid{party\_ids}\), Lean constructs
+\[
+  \leanid{mk\_dummy\_party}\;f\;pid : \DummyParty\;\Pay .
+\]
+The dummy party has one input port to \(f.\leanid{functionality\_id}\), one
+subroutine-output port to each external identity in
+\(f.\leanid{party\_external\_ids}\;pid\), and no backdoor port.  Its resume
+step is fixed by the core construction:
+\begin{itemize}
+\item Pending \(\leanid{input}\): send
+\[
+  f.\leanid{wrap\_input}\;m.\leanid{source}\;m.\leanid{payload}
+\]
+to \(f\).
+\item Pending \(\leanid{subroutineOutput}\): parse
+\[
+  f.\leanid{unwrap\_output}\;m.\leanid{payload}
+\]
+and forward the parsed payload to an external identity.
+\item Pending \(\leanid{backdoor}\): drop the message.
+\end{itemize}
+Thus dummy parties are generated once from the ideal functionality interface;
+case studies should not hand-write their forwarding behavior.  In particular,
+the simulator does not directly control a dummy party.  Any information about a
+corrupted party, or any command issued on behalf of that party in the ideal
+world, must be represented by the ideal functionality's own program and
+backdoor interface.
+\end{definition}
+
+\begin{definition}[Ideal protocol generated from a functionality]
+The ideal protocol is produced by
+\[
+  \leanid{mk\_ideal\_protocol}\;f : \IdealProtocol\;\Pay .
+\]
+Its machine list is exactly
+\[
+  \leanid{mk\_dummy\_parties}\;f
+  \quad\hbox{followed by}\quad
+  f.\leanid{machine}.
+\]
+The generated protocol has no global visibility set.  It currently sets
+\[
+  \varphi_f.\leanid{corruptible\_machines}=\varnothing,
+  \qquad
+  \varphi_f = (\leanid{mk\_ideal\_protocol}\;f).\leanid{protocol}.
+\]
+The simulator can send ordinary \(\leanid{plain}\) backdoor/control messages
+to the ideal functionality through the runtime overlay, and the functionality
+program decides how to interpret those payloads.  A message
+\(\leanid{instruction}=\leanid{corrupt}(pid)\) is also routed to the envelope
+destination, not to \(pid\); the instruction only tells the controller which
+static corruption identity must be authorized.
+
+The empty \(\leanid{corruptible\_machines}\) field means the generated ideal
+protocol is immediately usable for the no-corruption case
+\(\Corr=\varnothing\).  Nonempty corruption patterns require an additional
+corrupt-party proxy or an ideal-protocol generator that marks the appropriate
+party identities as corruptible; this is a design direction, not a completed
+implementation.
+The constructor also proves the protocol-shape obligations.  In particular,
+the generated main machines are exactly the dummy parties, and the generated
+internal machine is the functionality.
+\end{definition}
+
+\subsection{Controller Execution}
+
+\begin{definition}[Runtime communication set]
+The controller does not execute directly from a machine's static
+communication set.  For a setup \(\sigma\), it computes
+\[
+  \sigma.\leanid{runtime\_communication\_set}\;i : \mathsf{Finset}\;\Port
+\]
+for the currently active sender \(i\).  This set is the union of the sender's
+base protocol ports and the setup-dependent overlay:
+\begin{itemize}
+\item \(\EnvId\) receives input ports to all main machines;
+\item \(\AdvId\) receives backdoor ports to all protocol machines;
+\item every protocol machine receives a backdoor port to \(\AdvId\).
+\end{itemize}
+This overlay is deliberately a broad control-communication overlay.  It says
+which backdoor envelopes the controller can route; it does not say that a
+machine is corrupted.  Ordinary \(\leanid{plain}\) backdoor messages always
+pass the corruption-instruction check, and the target machine's program
+decides whether such a control payload has any effect.  The project may later
+add a separate control-target policy if a case study needs a narrower overlay.
+\end{definition}
+
+\begin{definition}[Outgoing-message validity]
+Before routing an emitted envelope, the controller checks
+\[
+  \sigma.\leanid{outgoing\_message\_valid}\;i\;e .
+\]
+This predicate requires
+\[
+\begin{array}{ll}
+e.\leanid{port.owner}=i, &
+e.\leanid{port}\in
+  \sigma.\leanid{runtime\_communication\_set}\;i .
+\end{array}
+\]
+It also checks the source convention.  If \(i=\EnvId\), then a message sent to
+\(\AdvId\) must have source \(\leanid{none}\), while a message sent to a
+protocol machine must claim one of that machine's external identities.  If
+\(i\ne\EnvId\), then the source must be \(\leanid{some}\;i\).  Invalid
+envelopes are dropped and control returns to the environment.
+
+The controller also checks corruption instructions:
+\[
+\begin{array}{rcl}
+\leanid{plain} &\Longmapsto& \mathsf{True},\\
+\leanid{corrupt}(pid)
+  &\Longmapsto&
+    e.\leanid{message.label}=\leanid{backdoor}
+    \land pid\in\sigma.\leanid{corrupted\_parties}.
+\end{array}
+\]
+The corrupted identity is read only from the instruction.  It is not inferred
+from \(e.\leanid{port.owner}\), \(e.\leanid{port.dest}\), or
+\(e.\leanid{message.source}\).  This is what permits the ideal-world pattern
+where a simulator sends a backdoor envelope to the ideal functionality with
+\(\leanid{instruction}=\leanid{corrupt}(pid)\); the functionality then decides
+what leakage or commands associated with \(pid\) mean.
+\end{definition}
+
+\begin{definition}[Controller state and step]
+A controller state stores the local states of \(E\), \(A\), all protocol
+machines, and the currently active identity:
+\[
+  s=(s_E,s_A,s_\pi,i_{\mathsf{active}})
+    : \leanid{ControllerState}\;\sigma .
+\]
+The initial active identity is always \(\EnvId\).  One controller step first
+checks whether the environment has halted.  If not, it resumes the active
+machine:
+\[
+\begin{array}{c|c}
+i_{\mathsf{active}} & \hbox{step used by the controller}\\ \hline
+\EnvId & \leanid{step\_environment}\\
+\AdvId & \leanid{step\_adversary}\\
+\hbox{protocol identity} & \leanid{step\_protocol\_machine}.
+\end{array}
+\]
+The emitted envelope, if any, is validated and then routed to the destination
+machine, the adversary, or the environment.  A subroutine output from a
+non-environment sender to an external identity is delivered to the environment.
+\end{definition}
+
+\begin{definition}[Execution ensemble]
+The controller runs for the fixed project budget
+\(\leanid{LeanCryptoProtocols.max\_controller\_steps}\), stopping earlier if
+the environment halts.  The security parameter \(n\) indexes machine
+initialization and protocol initial-state sampling; it is not the step budget.
+For a setup \(\sigma\), the execution ensemble is
+\[
+  \Run(\sigma) =
+    \Ctrl.\leanid{exec}\;\sigma : \mathbb{N}\to\mathsf{PMF}\;\mathsf{Bool}.
+\]
+The observed bit is the environment output after the controller run:
+\[
+  \Pr[\Run(\sigma,n)=1]
+    = \ProbOne(\Ctrl.\leanid{exec}\;\sigma\;n).
+\]
+For proof engineering, a path-matching proof should track the same sequence of
+active identities, validates the same envelopes, and compares the same final
+environment output distribution.
+\end{definition}
+
+\subsection{UC Security Definitions}
+
+\begin{definition}[Execution difference]
+For real and ideal setups over the same environment, Lean defines
+\[
+\begin{aligned}
+  \ExecDiff(\sigma_r,\sigma_i,n)
+    &=
+      \left|
+        \ProbOne(\Ctrl.\leanid{exec}\;\sigma_r\;n)
+        -
+        \ProbOne(\Ctrl.\leanid{exec}\;\sigma_i\;n)
+      \right|.
+\end{aligned}
+\]
+Perfect security is stated as equality of the full
+\(\mathsf{PMF}\;\mathsf{Bool}\), not merely equality of this scalar
+probability.  Statistical and computational security use \(\ExecDiff\) with a
+negligible bound.
+\end{definition}
+
+\begin{definition}[Security levels]
+The common security-level parameter is
+\[
+  \SecLevel
+    = \{\leanid{perfect},\leanid{statistical},\leanid{computational}\}.
+\]
+The underlying indistinguishability library also defines
+\(\leanid{PerfectIndist}\), \(\leanid{StatisticalIndist}\), and
+\(\leanid{ComputationalIndist}\) for general ensembles.  The UC definitions
+below specialize the observation to the controller output bit.
+\end{definition}
+
+\begin{definition}[UC-emulation at a static corruption pattern]
+For protocols \(\pi\) and \(\varphi\) over the same payload type, Lean defines
+\[
+  \UCEmulates(\ell,\Corr,\pi,\varphi)
+\]
+by cases on the security level \(\ell\).  The finite set \(\Corr\) is the
+static corruption pattern being compared.  It is a parameter of the theorem,
+not a field of \(A\) or \(S\).
+
+For fixed machines \(A,S,E\), execution is admitted only after supplying the
+corresponding setup witness:
+\[
+  \Sigma_r(A,E)=\Setup\;\pi\;A\;E,
+  \qquad
+  \Sigma_i(S,E)=\Setup\;\varphi\;S\;E.
+\]
+These setup values are proof-carrying legality certificates for the same
+machines.  The universal quantifier over \(\sigma_r\) and \(\sigma_i\) states
+that the security claim is independent of the particular setup witness
+supplied to Lean, as long as both setups instantiate the same static
+corruption pattern:
+\[
+  \sigma_r.\leanid{corrupted\_parties}=\Corr,\qquad
+  \sigma_i.\leanid{corrupted\_parties}=\Corr .
+\]
+\begin{itemize}
+\item Perfect:
+\[
+\begin{aligned}
+&\forall A\;\exists S\;\forall E,\\
+&\quad
+  \forall\sigma_r\!:\!\Sigma_r(A,E)\;
+  \forall\sigma_i\!:\!\Sigma_i(S,E),\\
+&\quad
+  \sigma_r.\leanid{corrupted\_parties}=\Corr
+  \Rightarrow
+  \sigma_i.\leanid{corrupted\_parties}=\Corr
+  \Rightarrow\\
+&\quad
+  \forall n,\;
+  \Ctrl.\leanid{exec}\;\sigma_r\;n
+  =
+  \Ctrl.\leanid{exec}\;\sigma_i\;n .
+\end{aligned}
+\]
+\item Statistical:
+\[
+\begin{aligned}
+&\forall A\;\exists S\;\forall E,\\
+&\quad
+  \forall\sigma_r\!:\!\Sigma_r(A,E)\;
+  \forall\sigma_i\!:\!\Sigma_i(S,E),\\
+&\quad
+  \sigma_r.\leanid{corrupted\_parties}=\Corr
+  \Rightarrow
+  \sigma_i.\leanid{corrupted\_parties}=\Corr
+  \Rightarrow\\
+&\quad
+  \exists \epsilon,\;
+  \Negl(\epsilon)\land
+  \forall n,\ \ExecDiff(\sigma_r,\sigma_i,n)\le \epsilon(n).
+\end{aligned}
+\]
+\item Computational:
+\[
+\begin{aligned}
+&\forall A,\PPTM(A)\Rightarrow
+  \exists S,\PPTM(S)\land\\
+&\quad
+  \forall E,\PPTM(E)\Rightarrow\\
+&\quad
+  \forall\sigma_r\!:\!\Sigma_r(A,E)\;
+  \forall\sigma_i\!:\!\Sigma_i(S,E),\\
+&\quad
+  \sigma_r.\leanid{corrupted\_parties}=\Corr
+  \Rightarrow
+  \sigma_i.\leanid{corrupted\_parties}=\Corr
+  \Rightarrow\\
+&\quad
+  \exists \epsilon,\;
+  \Negl(\epsilon)\land
+  \forall n,\ \ExecDiff(\sigma_r,\sigma_i,n)\le \epsilon(n).
+\end{aligned}
+\]
+\end{itemize}
+The no-corruption aliases
+\[
+\begin{array}{c}
+\leanid{UCEmulatesPerfect}\\
+\leanid{UCEmulatesStatistical}\\
+\leanid{UCEmulatesComputational}
+\end{array}
+\]
+instantiate \(\Corr=\varnothing\).  The corresponding
+\(\leanid{WithCorruption}\) aliases expose \(\Corr\) explicitly.
+\end{definition}
+
+\begin{definition}[UC-realization at a static corruption pattern]
+UC-realization is UC-emulation where the target protocol is generated from an
+ideal functionality:
+\[
+  \UCRealizes(\ell,\Corr,\pi,f)
+  \quad\hbox{uses}\quad
+  \varphi_f=(\leanid{mk\_ideal\_protocol}\;f).\leanid{protocol}.
+\]
+For fixed \(A,S,E\), the setup types are
+\[
+  \Sigma_r^f(A,E)=\Setup\;\pi\;A\;E,
+  \qquad
+  \Sigma_i^f(S,E)=\Setup\;\varphi_f\;S\;E.
+\]
+There is no additional visibility premise.  If the ideal functionality needs a
+simulator interface, the functionality machine must expose the relevant
+backdoor/control behavior in its communication set and program.  For example,
+the computational branch unfolds to
+\[
+\begin{aligned}
+&\forall A,\PPTM(A)\Rightarrow
+  \exists S,\PPTM(S)\land\\
+&\quad
+  \forall E,\PPTM(E)\Rightarrow\\
+&\quad
+  \forall\sigma_r\!:\!\Sigma_r^f(A,E)\;
+  \forall\sigma_i\!:\!\Sigma_i^f(S,E),\\
+&\quad
+  \sigma_r.\leanid{corrupted\_parties}=\Corr
+  \Rightarrow
+  \sigma_i.\leanid{corrupted\_parties}=\Corr
+  \Rightarrow\\
+&\quad
+  \exists\epsilon,\Negl(\epsilon)\land
+  \forall n,\ \ExecDiff(\sigma_r,\sigma_i,n)\le\epsilon(n).
+\end{aligned}
+\]
+The no-corruption aliases
+\[
+\begin{gathered}
+\leanid{UCRealizesPerfect},\qquad
+\leanid{UCRealizesStatistical},\\
+\leanid{UCRealizesComputational}
+\end{gathered}
+\]
+instantiate \(\Corr=\varnothing\).  The aliases ending in
+\(\leanid{WithCorruption}\) keep \(\Corr\) as an explicit parameter.
+\end{definition}
+
+\subsection{Composition Theorem}
+
+The current composition interface is expressed by
+\[
+  \leanid{CompositionContext}\;\Pay .
+\]
+A context supplies a protocol transformer \(\leanid{plug}\), projections for
+the host adversary and environment, a simulator lift, and setup-level
+reductions from host executions back to subprotocol executions.  The
+corruption-sensitive fields are:
+\[
+\begin{aligned}
+&(\leanid{real\_setup\_of}\;\sigma).\leanid{corrupted\_parties}
+  =
+  \sigma.\leanid{corrupted\_parties},\\
+&(\leanid{ideal\_setup\_of}\;\sigma).\leanid{corrupted\_parties}
+  =
+  \sigma.\leanid{corrupted\_parties}.
+\end{aligned}
+\]
+These equalities are the reason the theorem can preserve the same static
+pattern \(\Corr\):
+\[
+\begin{aligned}
+&\leanid{UCEmulatesAt}\;\ell\;\Corr\;\rho\;\varphi\\
+&\quad\Longrightarrow
+  \leanid{UCEmulatesAt}\;\ell\;\Corr\;
+    (\leanid{ctx.plug}\;\rho)\;(\leanid{ctx.plug}\;\varphi).
+\end{aligned}
+\]
+The theorem is currently an execution-reduction interface: the context must
+prove exact equality between the host controller execution and the projected
+subprotocol controller execution on both real and ideal sides.
+
+\subsection{Audit}
+
+\redcomment{TODO: to be completed.}
