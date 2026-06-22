@@ -207,3 +207,46 @@ lake build LeanCryptoProtocols.UC.Functionality.OT
 - 在新框架上重写 GMW / OT / GC 等协议实例
 
 这些是后续阶段的工作。
+
+
+
+已把 `Audit.lean` 移到：
+
+[Certificate/Audit.lean](/Users/yusen/Local/Auto-Crypto/lean-crypto-protocols/LeanCryptoProtocols/CaseStudy/SMCEasyUC/Certificate/Audit.lean:1)
+
+新模块已验证通过：
+
+```bash
+lake build LeanCryptoProtocols.CaseStudy.SMCEasyUC.Certificate.Audit
+```
+
+打印审计报告有两种方式。
+
+命令行方式，在 `lean-crypto-protocols` 根目录执行：
+
+```bash
+printf 'import LeanCryptoProtocols.CaseStudy.SMCEasyUC.Certificate.Audit
+#eval IO.println LeanCryptoProtocols.CaseStudy.SMCEasyUC.certificate_static_report
+' > /tmp/smc_static_audit.lean
+lake env lean /tmp/smc_static_audit.lean
+```
+
+动态 trace：
+
+```bash
+printf 'import LeanCryptoProtocols.CaseStudy.SMCEasyUC.Certificate.Audit
+#eval IO.println LeanCryptoProtocols.CaseStudy.SMCEasyUC.certificate_passive_trace
+' > /tmp/smc_trace_audit.lean
+lake env lean /tmp/smc_trace_audit.lean
+```
+
+VS Code 也可以。新建一个临时 `.lean` 文件，写：
+
+```lean
+import LeanCryptoProtocols.CaseStudy.SMCEasyUC.Certificate.Audit
+
+#eval IO.println LeanCryptoProtocols.CaseStudy.SMCEasyUC.certificate_static_report
+#eval IO.println LeanCryptoProtocols.CaseStudy.SMCEasyUC.certificate_passive_trace
+```
+
+Lean 插件会在 infoview / messages 里显示输出。命令行更适合长报告，因为复制和保存更方便。
