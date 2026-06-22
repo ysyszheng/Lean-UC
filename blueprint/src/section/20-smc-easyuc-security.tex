@@ -503,6 +503,16 @@ one must exhibit a negligible function \(\epsilon\) such that
   \forall n,\qquad
   \ExecDiff(\sigma_r,\sigma_i,n)\le \epsilon(n).
 \]
+
+The intended \(\IdealKE\) interface is not a DH-transcript functionality.
+It does not sample or reveal the DH public shares.  Instead, it sends the
+simulator two scheduling notifications: the first says that the first KE
+direction is ready to be released, and the second says that the confirmation
+direction is ready to be released.  Each notification contains only the
+metadata needed to identify the session and the parties, not a group element.
+The simulator decides whether to release the corresponding ideal key output.
+The two public DH shares seen by the real-world adversary are simulated by
+\(\SimKE_g(A)\), not leaked by \(\IdealKE_g\).
 \end{definition}
 
 \begin{definition}[DHKE hybrids]
@@ -553,6 +563,10 @@ Then set
 Here \(w^\circ=\leanid{DDHRealWitness.to\_sample}\;w\).  The only
 computational step is the passage from \(\Hyb_2\) to \(\Hyb_3\).  All other
 steps must be exact equalities of \(\mathsf{PMF}\;\mathsf{Bool}\).
+In \(\Hyb_4\), the DDH-random sample \(x=(G,X,Y,Z)\) is used only as a proof
+coupling source: \(X\) and \(Y\) program the simulator's fake forwarding
+observations, while \(Z\) programs the ideal key sampler.  The ideal
+functionality itself must not send \(X\) or \(Y\) to the simulator.
 \end{definition}
 
 \begin{lemma}[Real execution equals DDH-real challenge]
@@ -682,15 +696,29 @@ real adversary the following view:
   \leanid{Forw.observe}\;Y,
 \]
 and outputs the same key \(Z\) to both KE parties, subject only to the
-adversary's two release messages.  The challenge-ideal protocol fixes
-\(\IdealKE\)'s transcript sampler to the same triple \((X,Y,Z)\).  The
-simulator \(\SimKE_g(A)\) stores \(A\)'s local state, delivers to \(A\) the
-same two forwarding observations, and translates the first and second
-forwarding releases into
+adversary's two release messages.
+
+The challenge-ideal execution must reproduce this view without making
+\(\IdealKE\) a transcript-aware functionality.  It is constructed from the
+same sample \(x\) as follows.
+\begin{itemize}
+\item The simulator is challenge-programmed with \(X\) and \(Y\).  When
+\(\IdealKE\) sends its first metadata-only scheduling notification, the
+simulator delivers to the wrapped adversary \(A\) a forged
+\(\leanid{Forw.observe}\;X\).  When \(\IdealKE\) sends its second scheduling
+notification, the simulator delivers a forged \(\leanid{Forw.observe}\;Y\).
+\item The ideal functionality is challenge-programmed only with the key
+component \(Z\).  Its two notifications to the simulator reveal that a
+corresponding KE direction is pending, but they do not reveal \(X\) or \(Y\).
+\item The simulator stores \(A\)'s local state and translates the first and
+second forwarding releases requested by \(A\) into
 \[
   \leanid{IdealKE.release\_init},\qquad
   \leanid{IdealKE.release\_confirm}.
 \]
+These release commands make \(\IdealKE\) send key \(Z\) to the appropriate
+dummy party, which then forwards the output to the environment.
+\end{itemize}
 
 The exact equality proof is again a bounded controller-state simulation.  The
 state relation must record:
@@ -701,8 +729,10 @@ state relation must record:
 \(\leanid{waiting\_init\_release}\),
 \(\leanid{waiting\_confirm\_release}\), or \(\leanid{done}\), matching which
 real forwarding release is next;
-\item real forwarding states correspond to \(\IdealKE\)'s current phase and to
-the simulator's pending input to \(A\);
+\item real forwarding states correspond to \(\IdealKE\)'s current release phase
+and to the simulator's pending forged input to \(A\);
+\item the simulator's forged first and second observations are exactly
+\(X\) and \(Y\), respectively;
 \item both parties' eventual output envelopes carry the same key
 \(\leanid{challenge\_shared\_key}\;x=Z\);
 \item every message delivered to \(E\) and every message delivered to the
@@ -715,26 +745,35 @@ because the KE protocol and the two forwarding functionalities are one-shot.
 No computational assumption is used in this lemma.
 
 After the fixed-sample equality, \(\Hyb_4=\Hyb_5\) follows by unfolding the
-standard ideal functionality sampler:
+standard ideal-world samplers.  In the corrected model this is not a sampler
+for a full ideal KE transcript.  It is a joint-distribution statement saying
+that independently running the standard simulator's fake-share sampler and the
+standard \(\IdealKE\) key sampler has the same distribution as drawing
+\(x\leftarrow\leanid{ddh\_random}\;g\;n\) and using \(X,Y\) for the simulator
+and \(Z\) for the ideal key:
 \[
 \begin{aligned}
-&\leanid{sample\_ideal\_ke\_transcript}\;g\;n\\
+&\leanid{sample\_ideal\_challenge\_components}\;g\;n\\
 &\quad =
   (\leanid{ddh\_random}\;g\;n).\leanid{bind}
     \lambda x,\;
-      \mathsf{pure}\;
-        (\leanid{challenge\_ideal\_transcript}\;x).
+      \mathsf{pure}\;C_x,\\
+&\text{where}\quad
+  C_x =
+    (\leanid{challenge\_simulator\_view}\;x,
+     \leanid{challenge\_ideal\_key}\;x).
 \end{aligned}
 \]
-This identity is already named
-\(\leanid{sample\_ideal\_ke\_transcript\_eq\_ddh\_random}\).  What remains in
-Lean is to lift it through \(\leanid{mk\_ideal\_protocol}\),
-\(\leanid{ExecutionSetup}\), and \(\Ctrl.\leanid{exec}\).
+Lean must replace the old full-transcript sampler lemma with this
+share/key-separated sampler lemma, and then lift it through
+\(\leanid{mk\_ideal\_protocol}\), \(\leanid{ExecutionSetup}\), and
+\(\Ctrl.\leanid{exec}\).
 \end{proof}
 
-\begin{theorem}[DHKE computational UC-realizes \(\IdealKE\)]
+\begin{theorem}[Conditional DHKE computational UC-realization of \(\IdealKE\)]
 Let \(gen\) be a PPT group generator satisfying
-\(\leanid{ppt\_ddh\_assumption}\;gen\).  Then
+\(\leanid{ppt\_ddh\_assumption}\;gen\).  If the exact trace obligations above
+are proved for the corrected ideal interface, then
 \[
   \leanid{UCRealizesComputational}\;
     \RealKE_{gen.\leanid{run}}\;\IdealKE_{gen.\leanid{run}} .
@@ -783,8 +822,8 @@ Current Lean already implements:
 \item \(\RealKE_g\), \(\IdealKE_g\), and the black-box simulator
 \(\SimKE_g(A)\);
 \item DDH-real witnesses and their projection to \(\leanid{ddh\_real}\);
-\item challenge-real and challenge-ideal protocols, plus setup transport
-lemmas preserving \(\leanid{corrupted\_parties}\);
+\item the challenge-real protocol and setup transport lemmas preserving
+\(\leanid{corrupted\_parties}\);
 \item local DH equalities for the first share, second share, and shared key;
 \item the setup-specific DDH reduction theorem
 \[
@@ -801,19 +840,23 @@ Lean still needs the following theorem-level objects:
 \(\Hyb_0=\Hyb_1\);
 \item a fixed-DDH-random-sample controller simulation proving
 \(\Hyb_3=\Hyb_4\);
-\item an ideal-sampler lifting theorem proving
+\item a corrected challenge-ideal protocol in which \(X,Y\) are supplied to a
+challenge-programmed simulator, while \(\IdealKE\) receives only the key
+component \(Z\) and sends only metadata-only scheduling notifications to the
+simulator;
+\item a share/key-separated ideal-sampler lifting theorem proving
 \(\Hyb_4=\Hyb_5\);
 \item the final assembly theorem proving \(\leanid{DHKE.uc\_realizes}\;gen\).
 \end{itemize}
 The most delicate missing piece is \(\Hyb_3=\Hyb_4\).  The implementation must
-check that the current five-state \(\IdealKE\) interface and the real DHKE
-responder's scheduling of the second share admit the stated stuttering
-simulation.  If this proof gets stuck on the order of the responder key output,
-the fix should be made at the protocol/functionality interface level, not in
-the DDH reduction: either adjust the real responder to wait for an explicit
-confirm activation, or adjust \(\IdealKE\)'s simulator interface so that it
-can reproduce the real second-share observation at the same abstract point in
-the trace.
+first correct the current five-state \(\IdealKE\) interface if it still exposes
+\(\leanid{observe\_init\_share}\) or
+\(\leanid{observe\_confirm\_share}\).  Those shares are real-protocol transcript
+messages and must be forged by the simulator.  After this correction, the proof
+must check that the two metadata-only \(\IdealKE\) notifications align with the
+two real-world forwarding directions, and that the real DHKE responder's
+scheduling of the second share and key output admits the required stuttering
+simulation.
 \end{obligation}
 
 \begin{obligation}[Lift the DHKE milestone into the SMC context]
