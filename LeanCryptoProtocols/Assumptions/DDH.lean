@@ -29,8 +29,16 @@ structure GroupDescription where
   generator : Element
   pow : Element → Exponent → Element
   encode : Element → Nat
+  decode : Nat → Option Element
   mul_exp : Exponent → Exponent → Exponent
   sample_exponent : PMF Exponent
+  decode_encode : ∀ x : Element, decode (encode x) = some x
+  pow_mul_generator :
+    ∀ a b : Exponent,
+      pow (pow generator a) b = pow generator (mul_exp a b)
+  pow_mul_generator_comm :
+    ∀ a b : Exponent,
+      pow (pow generator a) b = pow (pow generator b) a
 
 /-- 由安全参数索引的群生成算法。 -/
 abbrev GroupGenerator : Type (u + 1) :=

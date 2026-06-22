@@ -491,6 +491,30 @@ noncomputable def step_adversary {Payload : Type u} {π : Protocol Payload}
       { st with adv_state := result.state }
     handle_outgoing setup st' adv_id result.outgoing?
 
+/-- 如果环境的 `resume` 是纯结果，则环境单步就是对应的 `handle_outgoing`。 -/
+theorem step_environment_of_resume {Payload : Type u} {π : Protocol Payload}
+    {A : Adversary Payload} {E : Environment Payload}
+    (setup : ExecutionSetup π A E)
+    (st : ControllerState setup)
+    (result : ActivationResult Payload E.machine.program.LocalState)
+    (h_resume :
+      E.machine.program.resume st.env_state = PMF.pure result) :
+    step_environment setup st =
+      handle_outgoing setup { st with env_state := result.state } env_id result.outgoing? := by
+  simp [step_environment, h_resume]
+
+/-- 如果 adversary 的 `resume` 是纯结果，则 adversary 单步就是对应的 `handle_outgoing`。 -/
+theorem step_adversary_of_resume {Payload : Type u} {π : Protocol Payload}
+    {A : Adversary Payload} {E : Environment Payload}
+    (setup : ExecutionSetup π A E)
+    (st : ControllerState setup)
+    (result : ActivationResult Payload A.machine.program.LocalState)
+    (h_resume :
+      A.machine.program.resume st.adv_state = PMF.pure result) :
+    step_adversary setup st =
+      handle_outgoing setup { st with adv_state := result.state } adv_id result.outgoing? := by
+  simp [step_adversary, h_resume]
+
 /-- 激活某个 protocol machine 一次。 -/
 noncomputable def step_protocol_machine {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
@@ -578,6 +602,41 @@ noncomputable def step {Payload : Type u} {π : Protocol Payload}
   else
     step_protocol_machine setup st st.active_id
 
+/-- 当前 active machine 是环境时，`step` 展开为 `step_environment`。 -/
+theorem step_of_environment {Payload : Type u} {π : Protocol Payload}
+    {A : Adversary Payload} {E : Environment Payload}
+    (setup : ExecutionSetup π A E)
+    (st : ControllerState setup)
+    (h_halted : environment_halted st = false)
+    (h_active : st.active_id = env_id) :
+    step setup st = step_environment setup st := by
+  simp [step, h_halted, h_active]
+
+/-- 当前 active machine 是 adversary 时，`step` 展开为 `step_adversary`。 -/
+theorem step_of_adversary {Payload : Type u} {π : Protocol Payload}
+    {A : Adversary Payload} {E : Environment Payload}
+    (setup : ExecutionSetup π A E)
+    (st : ControllerState setup)
+    (h_halted : environment_halted st = false)
+    (h_active : st.active_id = adv_id) :
+    step setup st = step_adversary setup st := by
+  simp [step, h_halted, h_active]
+
+/-- 当前 active machine 是普通 protocol machine 时，`step` 展开为 `step_protocol_machine`。 -/
+theorem step_of_protocol_machine {Payload : Type u} {π : Protocol Payload}
+    {A : Adversary Payload} {E : Environment Payload}
+    (setup : ExecutionSetup π A E)
+    (st : ControllerState setup)
+    (h_halted : environment_halted st = false)
+    (h_not_env : st.active_id ≠ env_id)
+    (h_not_adv : st.active_id ≠ adv_id) :
+    step setup st = step_protocol_machine setup st st.active_id := by
+  have h_not_env_zero : st.active_id ≠ 0 := by
+    simpa [env_id] using h_not_env
+  have h_not_adv_one : st.active_id ≠ 1 := by
+    simpa [adv_id] using h_not_adv
+  simp [step, h_halted, h_not_env_zero, h_not_adv_one]
+
 /--
 在步数预算 `fuel` 内运行 controller。
 
@@ -593,6 +652,76 @@ noncomputable def run_steps {Payload : Type u} {π : Protocol Payload}
         PMF.pure st
       else
         (step setup st).bind fun st' => run_steps setup fuel st'
+
+/--
+Controller 的函数式模拟引理。
+
+如果 `map_state` 保持环境 halt 判断，并且一次 controller step 与 `map_state`
+交换，那么任意步数预算下的 `run_steps` 也与 `map_state` 交换。DHKE 等具体
+证明可以把真实执行状态投影到 challenge/ideal 执行状态，再用该引理把局部
+machine step 等式提升为完整 controller trace 等式。
+-/
+theorem run_steps_map_of_step_map {Payload : Type u}
+    {π₁ π₂ : Protocol Payload}
+    {A₁ A₂ : Adversary Payload}
+    {E₁ E₂ : Environment Payload}
+    {setup₁ : ExecutionSetup π₁ A₁ E₁}
+    {setup₂ : ExecutionSetup π₂ A₂ E₂}
+    (map_state : ControllerState setup₁ → ControllerState setup₂)
+    (h_halted :
+      ∀ st, environment_halted (map_state st) = environment_halted st)
+    (h_step :
+      ∀ st, environment_halted st = false →
+        step setup₂ (map_state st) =
+          (step setup₁ st).bind fun st' => PMF.pure (map_state st')) :
+    ∀ fuel st,
+      run_steps setup₂ fuel (map_state st) =
+        (run_steps setup₁ fuel st).bind fun st' => PMF.pure (map_state st') := by
+  intro fuel
+  induction fuel with
+  | zero =>
+      intro st
+      simp [run_steps]
+  | succ fuel ih =>
+      intro st
+      by_cases h : environment_halted st = true
+      · have h₂ : environment_halted (map_state st) = true := by
+          simp [h_halted st, h]
+        simp [run_steps, h, h₂]
+      · have h_false : environment_halted st = false := by
+          cases hst : environment_halted st <;> simp [hst] at h ⊢
+        have h₂_false : environment_halted (map_state st) = false := by
+          simp [h_halted st, h_false]
+        simp [run_steps, h_false, h₂_false, h_step st h_false, PMF.bind_bind, ih]
+
+/--
+`run_steps_map_of_step_map` 的输出分布版本。
+
+除了 step-level 交换外，如果 `map_state` 还保持环境输出，则两个 controller
+run 在输出层完全相同。
+-/
+theorem run_steps_output_eq_of_step_map {Payload : Type u}
+    {π₁ π₂ : Protocol Payload}
+    {A₁ A₂ : Adversary Payload}
+    {E₁ E₂ : Environment Payload}
+    {setup₁ : ExecutionSetup π₁ A₁ E₁}
+    {setup₂ : ExecutionSetup π₂ A₂ E₂}
+    (map_state : ControllerState setup₁ → ControllerState setup₂)
+    (h_halted :
+      ∀ st, environment_halted (map_state st) = environment_halted st)
+    (h_output :
+      ∀ st, environment_output (map_state st) = environment_output st)
+    (h_step :
+      ∀ st, environment_halted st = false →
+        step setup₂ (map_state st) =
+          (step setup₁ st).bind fun st' => PMF.pure (map_state st'))
+    (fuel : Nat) (st : ControllerState setup₁) :
+    (run_steps setup₂ fuel (map_state st)).bind
+        (fun st₂ => PMF.pure (environment_output st₂)) =
+      (run_steps setup₁ fuel st).bind
+        (fun st₁ => PMF.pure (environment_output st₁)) := by
+  rw [run_steps_map_of_step_map map_state h_halted h_step fuel st]
+  simp [PMF.bind_bind, h_output]
 
 /--
 在步数预算内运行 controller，并记录是正常 halt 还是耗尽预算。

@@ -99,12 +99,7 @@ inductive KEBody where
   | confirm
   | observe_init
       (initiator_id responder_id : MachineId)
-  | observe_init_share
-      (initiator_id responder_id : MachineId)
-      (first_share : GroupElement)
   | observe_confirm
-  | observe_confirm_share
-      (second_share : GroupElement)
   | release_init
   | release_confirm
   | key (shared_key : SharedKey)

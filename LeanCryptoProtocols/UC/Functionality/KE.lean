@@ -12,10 +12,14 @@ namespace LeanCryptoProtocols.UC.Functionality
 
 open LeanCryptoProtocols.UC
 
-/-- `KE` 理想功能一次会话中对 simulator 可见的 transcript 与输出 key。 -/
-structure KEIdealTranscript where
-  first_share : GroupElement
-  second_share : GroupElement
+/--
+`KE` 理想功能一次会话中的 key material。
+
+理想功能不采样、也不泄漏 DH public shares。它发送给 simulator 的两条消息
+只是 metadata-only 的调度通知；证明中的 fake DH public shares 由 simulator
+自己采样或由 challenge 编程提供，不属于 `IdealKE` 的语义。
+-/
+structure KEIdealKeyMaterial where
   shared_key : SharedKey
   deriving Repr, DecidableEq
 
@@ -44,7 +48,7 @@ structure KEIds where
       responder_external_id ≠ functionality_id ∧
       responder_external_id ≠ env_id ∧
       responder_external_id ≠ adv_id
-  sample_transcript : ℕ → PMF KEIdealTranscript
+  sample_key_material : ℕ → PMF KEIdealKeyMaterial
 
 /-- `KE` functionality 发往 initiator 的端口。 -/
 def ke_initiator_port (ids : KEIds) : CommPort :=
@@ -80,13 +84,13 @@ inductive Phase where
       (initiator_id responder_id : MachineId)
   | kstate2
       (initiator_id responder_id : MachineId)
-      (transcript : KEIdealTranscript)
+      (key_material : KEIdealKeyMaterial)
   | kstate3
       (initiator_id responder_id : MachineId)
-      (transcript : KEIdealTranscript)
+      (key_material : KEIdealKeyMaterial)
   | kstate4
       (initiator_id responder_id : MachineId)
-      (transcript : KEIdealTranscript)
+      (key_material : KEIdealKeyMaterial)
   | kstate5
   deriving Repr, DecidableEq
 
@@ -101,30 +105,27 @@ def init_state (n : ℕ) : State := {
   pending_outgoing := none
 }
 
-def build_init_observe_envelope (ids : KEIds)
-      (transcript : KEIdealTranscript) :
+def build_init_observe_envelope (ids : KEIds) :
       Envelope SMCEasyUCPayload :=
     { port := ke_adversary_port ids
       message := {
         source := some ids.functionality_id
         label := .backdoor
         payload := .ke_plain
-          (.observe_init_share
+          (.observe_init
             ids.initiator_external_id
-            ids.responder_external_id
-            transcript.first_share)
+            ids.responder_external_id)
       }
       label_matches := rfl
     }
 
-def build_confirm_observe_envelope (ids : KEIds)
-      (transcript : KEIdealTranscript) :
+def build_confirm_observe_envelope (ids : KEIds) :
       Envelope SMCEasyUCPayload :=
     { port := ke_adversary_port ids
       message := {
         source := some ids.functionality_id
         label := .backdoor
-        payload := .ke_plain (.observe_confirm_share transcript.second_share)
+        payload := .ke_plain .observe_confirm
       }
       label_matches := rfl
     }
@@ -162,27 +163,27 @@ def receive_init (ids : KEIds) (st : State) : State :=
 def receive_release_init (ids : KEIds)
       (st : State)
       (initiator_id responder_id : MachineId)
-      (transcript : KEIdealTranscript) : State :=
+      (key_material : KEIdealKeyMaterial) : State :=
     { st with
-      phase := .kstate3 initiator_id responder_id transcript
+      phase := .kstate3 initiator_id responder_id key_material
       pending_outgoing :=
-        some (build_responder_key_envelope ids transcript.shared_key) }
+        some (build_responder_key_envelope ids key_material.shared_key) }
 
 def receive_confirm (ids : KEIds)
       (st : State)
       (initiator_id responder_id : MachineId)
-      (transcript : KEIdealTranscript) : State :=
+      (key_material : KEIdealKeyMaterial) : State :=
     { st with
-      phase := .kstate4 initiator_id responder_id transcript
-      pending_outgoing := some (build_confirm_observe_envelope ids transcript) }
+      phase := .kstate4 initiator_id responder_id key_material
+      pending_outgoing := some (build_confirm_observe_envelope ids) }
 
 def receive_release_confirm (ids : KEIds)
       (st : State)
-      (transcript : KEIdealTranscript) : State :=
+      (key_material : KEIdealKeyMaterial) : State :=
     { st with
       phase := .kstate5
       pending_outgoing :=
-        some (build_initiator_key_envelope ids transcript.shared_key) }
+        some (build_initiator_key_envelope ids key_material.shared_key) }
 
 def receive (ids : KEIds) (st : State) (msg : Message SMCEasyUCPayload) :
       State :=
@@ -197,28 +198,28 @@ def receive (ids : KEIds) (st : State) (msg : Message SMCEasyUCPayload) :
           receive_init ids st
         else
           st
-    | .kstate2 initiator_id responder_id transcript, some src, .backdoor,
+    | .kstate2 initiator_id responder_id key_material, some src, .backdoor,
         .ke_plain .release_init =>
         if _h_src : src = adv_id then
-          receive_release_init ids st initiator_id responder_id transcript
+          receive_release_init ids st initiator_id responder_id key_material
         else
           st
-    | .kstate3 initiator_id responder_id transcript, some src, .input,
+    | .kstate3 initiator_id responder_id key_material, some src, .input,
         .ke_plain .confirm =>
         if _h_src : src = ids.responder_id then
-          receive_confirm ids st initiator_id responder_id transcript
+          receive_confirm ids st initiator_id responder_id key_material
         else
           st
-    | .kstate3 initiator_id responder_id transcript, _, .input,
+    | .kstate3 initiator_id responder_id key_material, _, .input,
         .ke_to_functionality caller_source .confirm =>
         if _h_src : caller_source = some ids.responder_external_id then
-          receive_confirm ids st initiator_id responder_id transcript
+          receive_confirm ids st initiator_id responder_id key_material
         else
           st
-    | .kstate4 _initiator_id _responder_id transcript, some src, .backdoor,
+    | .kstate4 _initiator_id _responder_id key_material, some src, .backdoor,
         .ke_plain .release_confirm =>
         if _h_src : src = adv_id then
-          receive_release_confirm ids st transcript
+          receive_release_confirm ids st key_material
         else
           st
     | _, _, _, _ =>
@@ -230,12 +231,12 @@ noncomputable def resume (ids : KEIds) (st : State) :
     | none =>
         match st.phase with
         | .kstate2_waiting_sample initiator_id responder_id =>
-            (ids.sample_transcript st.sec_param).bind fun transcript =>
+            (ids.sample_key_material st.sec_param).bind fun key_material =>
               PMF.pure {
                 state := { st with
-                  phase := .kstate2 initiator_id responder_id transcript
+                  phase := .kstate2 initiator_id responder_id key_material
                   pending_outgoing := none }
-                outgoing? := some (build_init_observe_envelope ids transcript)
+                outgoing? := some (build_init_observe_envelope ids)
               }
         | _ =>
             PMF.pure {
