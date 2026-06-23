@@ -757,7 +757,6 @@ theorem adversary_backdoor_targets_are_forw
 noncomputable def real_smc_protocol
     (gen : GroupGenerator) : Protocol SMCEasyUCPayload :=
   { machines := real_smc_machines gen
-    corruptible_machines := ∅
     unique_ids := real_smc_unique_ids gen
     caller_has_matching_subroutine :=
       real_smc_caller_has_matching_subroutine gen

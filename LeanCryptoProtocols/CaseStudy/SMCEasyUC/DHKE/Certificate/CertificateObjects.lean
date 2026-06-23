@@ -74,6 +74,18 @@ noncomputable def sample_ddh_random_key
   (ddh_random gen n).bind fun sample =>
     PMF.pure { shared_key := ⟨sample.1.encode sample.2.gz⟩ }
 
+/--
+DDH-random challenge 的 key component 边缘分布等于 IdealKE 的 key-only sampler。
+
+这只是采样分布的边缘化：`ddh_random` 中额外采样的两次 public share 指数
+在 key 投影下被忽略。
+-/
+theorem sample_ddh_random_key_eq_sample_ideal_ke_key
+    (gen : GroupGenerator.{0}) (n : ℕ) :
+    sample_ddh_random_key gen n = sample_ideal_ke_key gen n := by
+  simp [sample_ddh_random_key, sample_ideal_ke_key, sample_shared_key,
+    ddh_random, PMF.bind_bind]
+
 /-- DDH-real 的 key component 投影。 -/
 noncomputable def sample_ddh_real_key
     (gen : GroupGenerator.{0}) (n : ℕ) : PMF KEIdealKeyMaterial :=

@@ -486,7 +486,6 @@ noncomputable def real_protocol
     (gen : GroupGenerator) : Protocol SMCEasyUCPayload :=
   { machines := real_machines gen
     initial_states := real_initial_states gen
-    corruptible_machines := ∅
     unique_ids := real_unique_ids gen
     caller_has_matching_subroutine := real_caller_has_matching_subroutine gen
     subroutine_has_matching_caller := real_subroutine_has_matching_caller gen

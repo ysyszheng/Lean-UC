@@ -56,8 +56,6 @@ structure ExecutionSetup {Payload : Type u}
     ∀ p ∈ environment.machine.communication_set,
       (p.dest = adv_id ∧ p.label = .backdoor) ∨
         (p.dest ≠ adv_id ∧ p.label = .input ∧ protocol.is_main_machine p.dest)
-  corruption_allowed :
-    corrupted_parties ⊆ protocol.corruptible_machines
   adv_port_destinations_restricted :
     ∀ p ∈ adversary.machine.communication_set,
       p.dest = env_id

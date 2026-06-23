@@ -202,11 +202,6 @@ structure Protocol (Payload : Type u) where
   machines : List (AnyMachine Payload)
   initial_states : ℕ → PMF (List (AnyMachineState Payload)) :=
     fun n => PMF.pure (default_machine_states machines n)
-  /-- 该执行模型允许 adversary 静态腐化的机器集合。默认是无腐化模型。 -/
-  corruptible_machines : Finset MachineId := ∅
-  corruptible_machines_within_protocol :
-    corruptible_machines ⊆ (machine_ids machines).toFinset := by
-      simp
   unique_ids : (machine_ids machines).Nodup
   caller_has_matching_subroutine :
     ∀ m ∈ machines, ∀ mid : MachineId,

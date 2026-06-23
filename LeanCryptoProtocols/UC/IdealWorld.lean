@@ -488,7 +488,6 @@ noncomputable def mk_ideal_protocol {Payload : Type u}
               rw [h_party_ids]
   let protocol : Protocol Payload := {
     machines := machines
-    corruptible_machines := ∅
     unique_ids := by
       rw [h_ids]
       simpa using f.party_ids_nodup.concat f.functionality_not_party

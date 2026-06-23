@@ -187,17 +187,13 @@ def RandomChallengeIdealTraceMatching (gen : GroupGenerator.{0}) : Prop :=
             random_ideal_challenge_execution gen ideal_setup
 
 /--
-标准 ideal-world sampler 与 DDH-random share/key separated challenge 的
-controller lifting 义务。
+标准 ideal-world sampler 通过 controller 的提升义务。
 
-Corrected `IdealKE` samples only key material.  The simulator samples the fake
-DH public shares it shows to the wrapped adversary.  This obligation therefore
-has to lift the joint distribution equality between standard ideal-world
-components and the DDH-random projection `(fake X,Y for the simulator, key Z
-for IdealKE)` through `IdealKE`, `mk_ideal_protocol`, `ExecutionSetup`, and
-`Controller.exec`.
+这是 H5 的 controller 部分：在已经证明 share/key 分离采样器联合分布一致后，
+还要把该等价通过 `IdealKE`、`mk_ideal_protocol`、`ExecutionSetup` 与
+`Controller.exec` 提升到环境输出分布。
 -/
-def IdealSamplerLifting (gen : GroupGenerator.{0}) : Prop :=
+def IdealSamplerControllerLifting (gen : GroupGenerator.{0}) : Prop :=
   ∀ {A : Adversary.{0, 0} SMCEasyUCPayload}
     {E : Environment.{0, 0} SMCEasyUCPayload}
     (ideal_setup :
@@ -206,6 +202,83 @@ def IdealSamplerLifting (gen : GroupGenerator.{0}) : Prop :=
         (simulator gen A) E),
       random_ideal_challenge_execution gen ideal_setup =
         Controller.exec ideal_setup
+
+/--
+公共群 component-programmed ideal execution 到标准 ideal execution 的
+controller lifting 义务。
+
+`Model.lean` 已经证明 DDH-random challenge-ideal execution 等于该公共群
+component execution；因此后续只需把公共群 component execution 与标准
+`Controller.exec ideal_setup` 对齐。
+-/
+def PublicGroupIdealControllerLifting (gen : GroupGenerator.{0}) : Prop :=
+  ∀ {A : Adversary.{0, 0} SMCEasyUCPayload}
+    {E : Environment.{0, 0} SMCEasyUCPayload}
+    (ideal_setup :
+      ExecutionSetup
+        (mk_ideal_protocol (ideal_ke_functionality gen)).protocol
+        (simulator gen A) E),
+      public_group_ideal_component_execution gen ideal_setup =
+        Controller.exec ideal_setup
+
+/-- 公共群 component controller lifting 推出原 H5 controller lifting。 -/
+theorem ideal_sampler_controller_lifting_of_public_group_controller_lifting
+    (gen : GroupGenerator.{0})
+    (h_public_controller : PublicGroupIdealControllerLifting gen) :
+    IdealSamplerControllerLifting gen := by
+  intro A E ideal_setup
+  rw [random_ideal_challenge_execution_eq_public_group_component_execution]
+  exact h_public_controller ideal_setup
+
+/--
+H5 的完整 proof obligation。
+
+Corrected `IdealKE` 只采样 key material；simulator 自己采样或由 challenge
+编程得到 fake DH public shares。因此 H5 必须显式包含两个部分：
+
+1. 低层 share/key-separated sampler equivalence；
+2. 把该采样等价提升到完整 controller execution。
+
+这个结构避免把 DH transcript 塞进 `IdealKE` 的语义。
+-/
+structure IdealSamplerLifting (gen : GroupGenerator.{0}) : Prop where
+  share_key_sampler : ShareKeySeparatedSamplerEquivalence gen
+  controller_lifting : IdealSamplerControllerLifting gen
+
+/--
+用公共群参数 sampler 证明 H5 的标准入口。
+
+`Model.lean` 已经证明公共群版本的 share/key 分离采样等于 DDH-random
+projection。剩余工作是证明标准 ideal execution 的实际 sampler 确实等价于
+该公共群版本，并把这个采样等价提升到 controller 输出。
+-/
+theorem ideal_sampler_lifting_of_public_group_sampler
+    (gen : GroupGenerator.{0})
+    (h_public :
+      ∀ n,
+        sample_standard_ideal_components gen n =
+          sample_public_group_ideal_components gen n)
+    (h_controller : IdealSamplerControllerLifting gen) :
+    IdealSamplerLifting gen where
+  share_key_sampler :=
+    share_key_separated_sampler_equivalence_of_public_group_sampler gen h_public
+  controller_lifting := h_controller
+
+/--
+更贴近 corrected H5 的 assembly：低层 sampler 使用公共群版本，controller 侧也
+只需证明公共群 component execution 与标准 ideal execution 对齐。
+-/
+theorem ideal_sampler_lifting_of_public_group_obligations
+    (gen : GroupGenerator.{0})
+    (h_public_sampler :
+      ∀ n,
+        sample_standard_ideal_components gen n =
+          sample_public_group_ideal_components gen n)
+    (h_public_controller : PublicGroupIdealControllerLifting gen) :
+    IdealSamplerLifting gen :=
+  ideal_sampler_lifting_of_public_group_sampler gen h_public_sampler
+    (ideal_sampler_controller_lifting_of_public_group_controller_lifting
+      gen h_public_controller)
 
 /--
 Simulator wrapper 的 PPT 闭包。
@@ -278,7 +351,7 @@ theorem exec_diff_bound_of_hybrid_obligations
   have h_ideal_exec :
       random_ideal_challenge_execution gen.run ideal_setup =
         Controller.exec ideal_setup :=
-    h_ideal_lift ideal_setup
+    h_ideal_lift.controller_lifting ideal_setup
   calc
     exec_diff real_setup ideal_setup n =
         challenge_exec_diff gen.run real_setup n := by

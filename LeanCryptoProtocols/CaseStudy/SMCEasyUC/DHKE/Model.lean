@@ -127,7 +127,13 @@ private def translate_adversary_outgoing
   else
     (stage, none)
 
-private noncomputable def sample_simulator_view
+/--
+标准 ideal simulator 自己采样 fake DH public shares 的分布。
+
+这里的输出只给 simulator 用来伪造真实世界中的两条 `Forw.observe`；
+IdealKE 不读取这些 public shares。
+-/
+noncomputable def sample_simulator_view
     (gen : GroupGenerator.{0}) (n : ℕ) : PMF SimulatorView :=
   (ddh_random gen n).bind fun sample =>
     PMF.pure {
@@ -366,6 +372,60 @@ def ideal_challenge_components_of_sample
   key_material := challenge_ideal_key_material sample
 }
 
+/-! ## Component-programmed ideal world -/
+
+/--
+用显式 simulator view 构造 simulator。
+
+该构造只把 fake DH public shares 写入 simulator；IdealKE 不会看到这些 shares。
+-/
+noncomputable def simulator_with_view
+    (gen : GroupGenerator)
+    (view : SimulatorView)
+    (A : Adversary SMCEasyUCPayload) : Simulator SMCEasyUCPayload where
+  machine := simulator_machine gen (some view) A
+  id_matches := rfl
+  unique_backdoor_port_to_environment := by
+    refine ⟨simulator_to_environment_port, ?_, ?_⟩
+    · refine ⟨?_, rfl, rfl⟩
+      simp [simulator_machine, simulator_to_environment_port]
+    · intro y hy
+      rcases hy with ⟨hy_mem, _hy_dest, _hy_label⟩
+      simp [simulator_machine, simulator_to_environment_port] at hy_mem
+      rcases hy_mem with rfl
+      rfl
+
+/-- 用显式 key material 固定 IdealKE 的 key-only sampler。 -/
+noncomputable def ideal_ke_ids_with_key
+    (gen : GroupGenerator) (key_material : KEIdealKeyMaterial) : KEIds :=
+  { ideal_ke_ids gen with
+    sample_key_material := fun _ => PMF.pure key_material }
+
+/-- 用显式 key material 编程的 IdealKE。 -/
+noncomputable def ideal_ke_functionality_with_key
+    (gen : GroupGenerator) (key_material : KEIdealKeyMaterial) :
+    IdealFunctionality SMCEasyUCPayload :=
+  IdealKE (ideal_ke_ids_with_key gen key_material)
+
+/-- 用显式 key material 编程的 ideal protocol。 -/
+noncomputable def ideal_protocol_with_key
+    (gen : GroupGenerator) (key_material : KEIdealKeyMaterial) :
+    Protocol SMCEasyUCPayload :=
+  (mk_ideal_protocol (ideal_ke_functionality_with_key gen key_material)).protocol
+
+/-- component-programmed simulator。 -/
+noncomputable def simulator_of_components
+    (gen : GroupGenerator)
+    (components : IdealChallengeComponents)
+    (A : Adversary SMCEasyUCPayload) : Simulator SMCEasyUCPayload :=
+  simulator_with_view gen components.simulator_view A
+
+/-- component-programmed ideal protocol。 -/
+noncomputable def ideal_protocol_of_components
+    (gen : GroupGenerator)
+    (components : IdealChallengeComponents) : Protocol SMCEasyUCPayload :=
+  ideal_protocol_with_key gen components.key_material
+
 /--
 DDH-random challenge-ideal 的联合采样器。
 
@@ -378,6 +438,110 @@ noncomputable def sample_ideal_challenge_components
   (ddh_random gen n).bind fun sample =>
     PMF.pure (ideal_challenge_components_of_sample sample)
 
+/--
+标准 ideal execution 中分离采样得到的 simulator view 与 IdealKE key material。
+
+这刻画 H5 需要提升的低层采样对象：普通 simulator 自己采样 fake shares，
+IdealKE 独立调用自己的 key-only sampler。若群生成算法本身带随机性，要把该
+采样器与 `sample_ideal_challenge_components` 等同，需要额外证明它们的联合
+分布确实一致，或者在建模中显式加入一次公共 setup 群描述。
+-/
+noncomputable def sample_standard_ideal_components
+    (gen : GroupGenerator.{0}) (n : ℕ) : PMF IdealChallengeComponents :=
+  (sample_simulator_view gen n).bind fun view =>
+    (sample_ideal_ke_key gen n).bind fun key_material =>
+      PMF.pure {
+        simulator_view := view
+        key_material := key_material
+      }
+
+/--
+在一个已经公开固定的群描述中采样 simulator 的 fake DH public shares。
+
+这是 H5 正确 coupling 需要的低层对象：standard ideal execution 中 simulator
+展示给 adversary 的 fake shares 与 IdealKE 输出的 key 应共享同一个公共群参数。
+-/
+noncomputable def sample_simulator_view_in_group
+    (G : GroupDescription.{0}) : PMF SimulatorView :=
+  G.sample_exponent.bind fun a =>
+    G.sample_exponent.bind fun b =>
+      PMF.pure {
+        first_share := ⟨G.encode (G.pow G.generator a)⟩
+        second_share := ⟨G.encode (G.pow G.generator b)⟩
+      }
+
+/-- 在同一个公开群描述中采样 IdealKE 的 key-only material。 -/
+noncomputable def sample_ideal_ke_key_in_group
+    (G : GroupDescription.{0}) : PMF KEIdealKeyMaterial :=
+  G.sample_exponent.bind fun c =>
+    PMF.pure {
+      shared_key := ⟨G.encode (G.pow G.generator c)⟩
+    }
+
+/--
+公共群参数版本的 standard ideal component sampler。
+
+该采样器先固定公共群 `G`，再分别给 simulator 采样 fake shares，并给 IdealKE
+采样独立 key。它是 corrected H5 中应当由标准 ideal execution 实现的联合采样。
+-/
+noncomputable def sample_standard_ideal_components_in_group
+    (G : GroupDescription.{0}) : PMF IdealChallengeComponents :=
+  (sample_simulator_view_in_group G).bind fun view =>
+    (sample_ideal_ke_key_in_group G).bind fun key_material =>
+      PMF.pure {
+        simulator_view := view
+        key_material := key_material
+      }
+
+/-- DDH-random projection 在固定公共群 `G` 下的展开形式。 -/
+noncomputable def sample_ideal_challenge_components_in_group
+    (G : GroupDescription.{0}) : PMF IdealChallengeComponents :=
+  G.sample_exponent.bind fun a =>
+    G.sample_exponent.bind fun b =>
+      G.sample_exponent.bind fun c =>
+        PMF.pure {
+          simulator_view := {
+            first_share := ⟨G.encode (G.pow G.generator a)⟩
+            second_share := ⟨G.encode (G.pow G.generator b)⟩
+          }
+          key_material := {
+            shared_key := ⟨G.encode (G.pow G.generator c)⟩
+          }
+        }
+
+/--
+固定公共群后，standard ideal 的 share/key 分离采样与 DDH-random projection
+完全相同。
+-/
+theorem sample_standard_ideal_components_in_group_eq_challenge_in_group
+    (G : GroupDescription.{0}) :
+    sample_standard_ideal_components_in_group G =
+      sample_ideal_challenge_components_in_group G := by
+  simp [sample_standard_ideal_components_in_group,
+    sample_simulator_view_in_group, sample_ideal_ke_key_in_group,
+    sample_ideal_challenge_components_in_group, PMF.bind_bind]
+
+/-- 先采样公共群，再运行公共群版本 standard ideal component sampler。 -/
+noncomputable def sample_public_group_ideal_components
+    (gen : GroupGenerator.{0}) (n : ℕ) : PMF IdealChallengeComponents :=
+  (gen n).bind fun G =>
+    sample_standard_ideal_components_in_group G
+
+/--
+公共群参数版本的 standard ideal sampler 等于 DDH-random 的 `(X,Y,Z)` 投影。
+-/
+theorem sample_public_group_ideal_components_eq_sample_ideal_challenge_components
+    (gen : GroupGenerator.{0}) (n : ℕ) :
+    sample_public_group_ideal_components gen n =
+      sample_ideal_challenge_components gen n := by
+  simp [sample_public_group_ideal_components,
+    sample_standard_ideal_components_in_group,
+    sample_simulator_view_in_group, sample_ideal_ke_key_in_group,
+    sample_ideal_challenge_components, ddh_random,
+    ideal_challenge_components_of_sample, challenge_simulator_view,
+    challenge_ideal_key_material, challenge_first_share, challenge_second_share,
+    challenge_shared_key, PMF.bind_bind]
+
 /-- 上面的联合采样器按定义就是 DDH-random sample 的 share/key 分离投影。 -/
 theorem sample_ideal_challenge_components_eq_ddh_random
     (gen : GroupGenerator.{0}) (n : ℕ) :
@@ -385,6 +549,65 @@ theorem sample_ideal_challenge_components_eq_ddh_random
       (ddh_random gen n).bind fun sample =>
         PMF.pure (ideal_challenge_components_of_sample sample) := by
   rfl
+
+/--
+DDH-random challenge components 投影到 simulator view 后，边缘分布就是标准
+simulator 的 fake-share sampler。
+-/
+theorem sample_ideal_challenge_components_view_eq_sample_simulator_view
+    (gen : GroupGenerator.{0}) (n : ℕ) :
+    (sample_ideal_challenge_components gen n).bind
+        (fun components => PMF.pure components.simulator_view) =
+      sample_simulator_view gen n := by
+  simp [sample_ideal_challenge_components, sample_simulator_view,
+    ideal_challenge_components_of_sample, challenge_simulator_view,
+    challenge_first_share, challenge_second_share, PMF.bind_bind]
+
+/--
+DDH-random challenge components 投影到 IdealKE key material 后，边缘分布就是
+IdealKE 的 key-only sampler。
+-/
+theorem sample_ideal_challenge_components_key_eq_sample_ideal_ke_key
+    (gen : GroupGenerator.{0}) (n : ℕ) :
+    (sample_ideal_challenge_components gen n).bind
+        (fun components => PMF.pure components.key_material) =
+      sample_ideal_ke_key gen n := by
+  simpa [sample_ideal_challenge_components, sample_ddh_random_key,
+    ideal_challenge_components_of_sample, challenge_ideal_key_material,
+    challenge_shared_key, PMF.bind_bind] using
+    sample_ddh_random_key_eq_sample_ideal_ke_key gen n
+
+/--
+H5 的低层 share/key separated sampler equivalence obligation。
+
+该命题是一个真正的概率建模义务，不是复杂度闭包：它要求标准 ideal 侧
+“simulator fake shares + IdealKE key” 的联合采样，与 DDH-random sample 的
+`(X,Y,Z)` 投影相同。
+-/
+def ShareKeySeparatedSamplerEquivalence
+    (gen : GroupGenerator.{0}) : Prop :=
+  ∀ n,
+    sample_standard_ideal_components gen n =
+      sample_ideal_challenge_components gen n
+
+/--
+当前 standard ideal sampler 若已经被证明等价于公共群参数版本，则可推出 H5
+需要的 share/key-separated sampler equivalence。
+
+这个 lemma 明确标出剩余建模边界：标准 ideal execution 必须共享公共群参数；
+否则 `sample_standard_ideal_components` 现在分别调用 simulator sampler 与
+IdealKE sampler，不能由定义直接化简为 DDH-random projection。
+-/
+theorem share_key_separated_sampler_equivalence_of_public_group_sampler
+    (gen : GroupGenerator.{0})
+    (h_public :
+      ∀ n,
+        sample_standard_ideal_components gen n =
+          sample_public_group_ideal_components gen n) :
+    ShareKeySeparatedSamplerEquivalence gen := by
+  intro n
+  rw [h_public n,
+    sample_public_group_ideal_components_eq_sample_ideal_challenge_components]
 
 /--
 DDH challenge 编程的 simulator。
@@ -396,69 +619,78 @@ DDH challenge 编程的 simulator。
 noncomputable def challenge_simulator
     (gen : GroupGenerator)
     (sample : DDHSample.{0})
-    (A : Adversary SMCEasyUCPayload) : Simulator SMCEasyUCPayload where
-  machine := simulator_machine gen (some (challenge_simulator_view sample)) A
-  id_matches := rfl
-  unique_backdoor_port_to_environment := by
-    refine ⟨simulator_to_environment_port, ?_, ?_⟩
-    · refine ⟨?_, rfl, rfl⟩
-      simp [simulator_machine, simulator_to_environment_port]
-    · intro y hy
-      rcases hy with ⟨hy_mem, _hy_dest, _hy_label⟩
-      simp [simulator_machine, simulator_to_environment_port] at hy_mem
-      rcases hy_mem with rfl
-      rfl
+    (A : Adversary SMCEasyUCPayload) : Simulator SMCEasyUCPayload :=
+  simulator_of_components gen (ideal_challenge_components_of_sample sample) A
 
 /-- 用 DDH challenge 的 key component 固定理想 KE 功能机的 key sampler。 -/
 noncomputable def challenge_ideal_ke_ids
     (gen : GroupGenerator) (sample : DDHSample.{0}) : KEIds :=
-  { ideal_ke_ids gen with
-    sample_key_material := fun _ => PMF.pure (challenge_ideal_key_material sample) }
+  ideal_ke_ids_with_key gen (challenge_ideal_key_material sample)
 
 /-- DDH challenge 编程的理想 KE 功能。 -/
 noncomputable def challenge_ideal_ke_functionality
     (gen : GroupGenerator) (sample : DDHSample.{0}) :
     IdealFunctionality SMCEasyUCPayload :=
-  IdealKE (challenge_ideal_ke_ids gen sample)
+  ideal_ke_functionality_with_key gen (challenge_ideal_key_material sample)
 
 /-- DDH challenge 编程的理想 KE protocol。 -/
 noncomputable def challenge_ideal_protocol
     (gen : GroupGenerator) (sample : DDHSample.{0}) :
     Protocol SMCEasyUCPayload :=
-  (mk_ideal_protocol (challenge_ideal_ke_functionality gen sample)).protocol
+  ideal_protocol_of_components gen (ideal_challenge_components_of_sample sample)
+
+/-- component-programmed ideal protocol 与标准 ideal KE protocol 有相同的 machine identity。 -/
+theorem ideal_protocol_of_components_machine_ids_eq_ideal
+    (gen : GroupGenerator) (components : IdealChallengeComponents) :
+    machine_ids (ideal_protocol_of_components gen components).machines =
+      machine_ids ((mk_ideal_protocol (ideal_ke_functionality gen)).protocol.machines) := by
+  simp [ideal_protocol_of_components, ideal_protocol_with_key,
+    ideal_ke_functionality_with_key, ideal_ke_ids_with_key,
+    ideal_ke_functionality, ideal_ke_ids, IdealKE, mk_ideal_protocol_machine_ids]
+
+/-- component-programmed ideal protocol 与标准 ideal KE protocol 有相同的 main-machine 判断。 -/
+theorem ideal_protocol_of_components_is_main_machine_iff
+    (gen : GroupGenerator) (components : IdealChallengeComponents) (mid : MachineId) :
+    (ideal_protocol_of_components gen components).is_main_machine mid ↔
+      ((mk_ideal_protocol (ideal_ke_functionality gen)).protocol).is_main_machine mid := by
+  simp [ideal_protocol_of_components, ideal_protocol_with_key,
+    ideal_ke_functionality_with_key, ideal_ke_ids_with_key,
+    ideal_ke_functionality, ideal_ke_ids, IdealKE,
+    mk_ideal_protocol_is_main_machine_iff]
+
+/-- component-programmed ideal protocol 与标准 ideal KE protocol 有相同的 internal-machine 判断。 -/
+theorem ideal_protocol_of_components_is_internal_machine_iff
+    (gen : GroupGenerator) (components : IdealChallengeComponents) (mid : MachineId) :
+    (ideal_protocol_of_components gen components).is_internal_machine mid ↔
+      ((mk_ideal_protocol (ideal_ke_functionality gen)).protocol).is_internal_machine mid := by
+  simp [ideal_protocol_of_components, ideal_protocol_with_key,
+    ideal_ke_functionality_with_key, ideal_ke_ids_with_key,
+    ideal_ke_functionality, ideal_ke_ids, IdealKE,
+    mk_ideal_protocol_is_internal_machine_iff]
 
 /-- challenge ideal protocol 与标准 ideal KE protocol 有相同的 machine identity。 -/
 theorem challenge_ideal_machine_ids_eq_ideal
     (gen : GroupGenerator) (sample : DDHSample.{0}) :
     machine_ids (challenge_ideal_protocol gen sample).machines =
       machine_ids ((mk_ideal_protocol (ideal_ke_functionality gen)).protocol.machines) := by
-  unfold challenge_ideal_protocol
-  rw [mk_ideal_protocol_machine_ids]
-  rw [mk_ideal_protocol_machine_ids]
-  simp [challenge_ideal_ke_functionality,
-    ideal_ke_functionality, challenge_ideal_ke_ids, ideal_ke_ids, IdealKE]
+  exact ideal_protocol_of_components_machine_ids_eq_ideal
+    gen (ideal_challenge_components_of_sample sample)
 
 /-- challenge ideal protocol 与标准 ideal KE protocol 有相同的 main-machine 判断。 -/
 theorem challenge_ideal_is_main_machine_iff
     (gen : GroupGenerator) (sample : DDHSample.{0}) (mid : MachineId) :
     (challenge_ideal_protocol gen sample).is_main_machine mid ↔
       ((mk_ideal_protocol (ideal_ke_functionality gen)).protocol).is_main_machine mid := by
-  unfold challenge_ideal_protocol
-  rw [mk_ideal_protocol_is_main_machine_iff]
-  rw [mk_ideal_protocol_is_main_machine_iff]
-  simp [challenge_ideal_ke_functionality, challenge_ideal_ke_ids,
-    ideal_ke_functionality, ideal_ke_ids, IdealKE]
+  exact ideal_protocol_of_components_is_main_machine_iff
+    gen (ideal_challenge_components_of_sample sample) mid
 
 /-- challenge ideal protocol 与标准 ideal KE protocol 有相同的 internal-machine 判断。 -/
 theorem challenge_ideal_is_internal_machine_iff
     (gen : GroupGenerator) (sample : DDHSample.{0}) (mid : MachineId) :
     (challenge_ideal_protocol gen sample).is_internal_machine mid ↔
       ((mk_ideal_protocol (ideal_ke_functionality gen)).protocol).is_internal_machine mid := by
-  unfold challenge_ideal_protocol
-  rw [mk_ideal_protocol_is_internal_machine_iff]
-  rw [mk_ideal_protocol_is_internal_machine_iff]
-  simp [challenge_ideal_ke_functionality, challenge_ideal_ke_ids,
-    ideal_ke_functionality, ideal_ke_ids, IdealKE]
+  exact ideal_protocol_of_components_is_internal_machine_iff
+    gen (ideal_challenge_components_of_sample sample) mid
 
 inductive ChallengeInitiatorAction where
   | send_first
@@ -1213,6 +1445,245 @@ noncomputable def project_responder_protocol_state
     (st : ResponderState) : ProtocolMachineState SMCEasyUCPayload :=
   challenge_responder_protocol_state gen sample (project_responder_state sample st)
 
+/-! ## Runtime protocol-machine projection lemmas -/
+
+/--
+`ProtocolMachineState.receive` 层的 initiator init 投影交换。
+
+controller 投递消息时操作的是 `ProtocolMachineState`，而不是裸的
+`InitiatorState`。该 lemma 把局部 receive 投影提升到 controller runtime state。
+-/
+theorem project_initiator_protocol_receive_init_of_witness
+    (gen : GroupGenerator.{0}) (n : ℕ) (witness : DDHRealWitness) :
+    ProtocolMachineState.receive
+      (project_initiator_protocol_state gen witness.to_sample
+        { sec_param := n
+          group? := some witness.G
+          secret? := some witness.initiator_secret
+          phase := .waiting_init
+          pending_action := none })
+      initiator_init_message =
+    project_initiator_protocol_state gen witness.to_sample
+      (initiator_receive
+        { sec_param := n
+          group? := some witness.G
+          secret? := some witness.initiator_secret
+          phase := .waiting_init
+          pending_action := none }
+        initiator_init_message) := by
+  simp [ProtocolMachineState.receive, project_initiator_protocol_state,
+    challenge_initiator_protocol_state, challenge_protocol_ke_sender_machine,
+    challenge_ke_sender_machine, challenge_initiator_program, lift_machine_to_type1,
+    project_initiator_receive_init_of_witness]
+
+/--
+`ProtocolMachineState.receive` 层的 responder first-share 投影交换。
+-/
+theorem project_responder_protocol_receive_first_share_of_witness
+    (gen : GroupGenerator.{0}) (n : ℕ) (witness : DDHRealWitness) :
+    ProtocolMachineState.receive
+      (project_responder_protocol_state gen witness.to_sample
+        { sec_param := n
+          group? := some witness.G
+          secret? := some witness.responder_secret
+          phase := .waiting_first
+          pending_peer_share := none
+          pending_outgoing := none })
+      (first_share_delivered_message witness.to_sample) =
+    project_responder_protocol_state gen witness.to_sample
+      (responder_receive
+        { sec_param := n
+          group? := some witness.G
+          secret? := some witness.responder_secret
+          phase := .waiting_first
+          pending_peer_share := none
+          pending_outgoing := none }
+        (first_share_delivered_message witness.to_sample)) := by
+  simp [ProtocolMachineState.receive, project_responder_protocol_state,
+    challenge_responder_protocol_state, challenge_protocol_ke_receiver_machine,
+    challenge_ke_receiver_machine, challenge_responder_program, lift_machine_to_type1,
+    project_responder_receive_first_share_of_witness]
+
+/--
+`ProtocolMachineState.receive` 层的 initiator second-share 投影交换。
+-/
+theorem project_initiator_protocol_receive_second_share_of_witness
+    (gen : GroupGenerator.{0}) (n : ℕ) (witness : DDHRealWitness) :
+    ProtocolMachineState.receive
+      (project_initiator_protocol_state gen witness.to_sample
+        { sec_param := n
+          group? := some witness.G
+          secret? := some witness.initiator_secret
+          phase := .waiting_second
+          pending_action := none })
+      (second_share_delivered_message witness.to_sample) =
+    project_initiator_protocol_state gen witness.to_sample
+      (initiator_receive
+        { sec_param := n
+          group? := some witness.G
+          secret? := some witness.initiator_secret
+          phase := .waiting_second
+          pending_action := none }
+        (second_share_delivered_message witness.to_sample)) := by
+  simp [ProtocolMachineState.receive, project_initiator_protocol_state,
+    challenge_initiator_protocol_state, challenge_protocol_ke_sender_machine,
+    challenge_ke_sender_machine, challenge_initiator_program, lift_machine_to_type1,
+    project_initiator_receive_second_share_of_witness]
+
+/--
+`ProtocolMachineState.resume` 层的 initiator 第一条 share 投影交换。
+-/
+theorem project_initiator_protocol_resume_send_first_of_witness
+    (gen : GroupGenerator.{0}) (n : ℕ) (witness : DDHRealWitness) :
+    ProtocolMachineState.resume
+      (project_initiator_protocol_state gen witness.to_sample
+        { sec_param := n
+          group? := some witness.G
+          secret? := some witness.initiator_secret
+          phase := .waiting_second
+          pending_action := some .send_first }) =
+    (ProtocolMachineState.resume
+      (real_initiator_protocol_state gen
+        { sec_param := n
+          group? := some witness.G
+          secret? := some witness.initiator_secret
+          phase := .waiting_second
+          pending_action := some .send_first })).bind
+      fun result =>
+        PMF.pure
+          (project_initiator_protocol_state gen witness.to_sample
+            { sec_param := n
+              group? := some witness.G
+              secret? := some witness.initiator_secret
+              phase := .waiting_second
+              pending_action := none },
+            result.2) := by
+  simp [ProtocolMachineState.resume, real_initiator_protocol_state,
+    project_initiator_protocol_state, challenge_initiator_protocol_state,
+    challenge_protocol_ke_sender_machine, challenge_ke_sender_machine,
+    challenge_initiator_program, ke_sender_machine, initiator_program,
+    lift_machine_to_type1, initiator_resume_send_first_of_witness,
+    challenge_initiator_resume, project_initiator_state, project_initiator_phase,
+    project_initiator_action]
+
+/--
+`ProtocolMachineState.resume` 层的 initiator key 输出投影交换。
+-/
+theorem project_initiator_protocol_resume_output_key_of_witness
+    (gen : GroupGenerator.{0}) (n : ℕ) (witness : DDHRealWitness) :
+    ProtocolMachineState.resume
+      (project_initiator_protocol_state gen witness.to_sample
+        { sec_param := n
+          group? := some witness.G
+          secret? := some witness.initiator_secret
+          phase := .waiting_second
+          pending_action :=
+            some (.output_key witness.responder_secret.public_share) }) =
+    (ProtocolMachineState.resume
+      (real_initiator_protocol_state gen
+        { sec_param := n
+          group? := some witness.G
+          secret? := some witness.initiator_secret
+          phase := .waiting_second
+          pending_action :=
+            some (.output_key witness.responder_secret.public_share) })).bind
+      fun result =>
+        PMF.pure
+          (project_initiator_protocol_state gen witness.to_sample
+            { sec_param := n
+              group? := some witness.G
+              secret? := none
+              phase := .done
+              pending_action := none },
+            result.2) := by
+  simp [ProtocolMachineState.resume, real_initiator_protocol_state,
+    project_initiator_protocol_state, challenge_initiator_protocol_state,
+    challenge_protocol_ke_sender_machine, challenge_ke_sender_machine,
+    challenge_initiator_program, ke_sender_machine, initiator_program,
+    lift_machine_to_type1, initiator_resume_output_key_of_witness,
+    challenge_initiator_resume, project_initiator_state, project_initiator_phase,
+    project_initiator_action]
+
+/--
+`ProtocolMachineState.resume` 层的 responder 第二条 share 投影交换。
+-/
+theorem project_responder_protocol_resume_send_second_of_witness
+    (gen : GroupGenerator.{0}) (n : ℕ) (witness : DDHRealWitness) :
+    ProtocolMachineState.resume
+      (project_responder_protocol_state gen witness.to_sample
+        { sec_param := n
+          group? := some witness.G
+          secret? := some witness.responder_secret
+          phase := .waiting_first
+          pending_peer_share := some witness.initiator_secret.public_share
+          pending_outgoing := none }) =
+    (ProtocolMachineState.resume
+      (real_responder_protocol_state gen
+        { sec_param := n
+          group? := some witness.G
+          secret? := some witness.responder_secret
+          phase := .waiting_first
+          pending_peer_share := some witness.initiator_secret.public_share
+          pending_outgoing := none })).bind
+      fun result =>
+        PMF.pure
+          (project_responder_protocol_state gen witness.to_sample
+            { sec_param := n
+              group? := some witness.G
+              secret? := some witness.responder_secret
+              phase := .sent_second
+              pending_peer_share := none
+              pending_outgoing :=
+                some (challenge_responder_key_envelope witness.to_sample) },
+            result.2) := by
+  simp [ProtocolMachineState.resume, real_responder_protocol_state,
+    project_responder_protocol_state, challenge_responder_protocol_state,
+    challenge_protocol_ke_receiver_machine, challenge_ke_receiver_machine,
+    challenge_responder_program, protocol_ke_receiver_machine, ke_receiver_machine,
+    responder_program, lift_machine_to_type1, responder_resume_send_second_of_witness,
+    challenge_responder_resume, project_responder_state, project_responder_phase,
+    project_responder_pending_first, project_responder_pending_outgoing,
+    challenge_first_share_of_witness]
+
+/--
+`ProtocolMachineState.resume` 层的 responder 暂存 key 输出投影交换。
+-/
+theorem project_responder_protocol_resume_pending_key_of_witness
+    (gen : GroupGenerator.{0}) (n : ℕ) (witness : DDHRealWitness) :
+    ProtocolMachineState.resume
+      (project_responder_protocol_state gen witness.to_sample
+        { sec_param := n
+          group? := some witness.G
+          secret? := some witness.responder_secret
+          phase := .sent_second
+          pending_peer_share := none
+          pending_outgoing := some (challenge_responder_key_envelope witness.to_sample) }) =
+    (ProtocolMachineState.resume
+      (real_responder_protocol_state gen
+        { sec_param := n
+          group? := some witness.G
+          secret? := some witness.responder_secret
+          phase := .sent_second
+          pending_peer_share := none
+          pending_outgoing := some (challenge_responder_key_envelope witness.to_sample) })).bind
+      fun result =>
+        PMF.pure
+          (project_responder_protocol_state gen witness.to_sample
+            { sec_param := n
+              group? := some witness.G
+              secret? := some witness.responder_secret
+              phase := .done
+              pending_peer_share := none
+              pending_outgoing := none },
+            result.2) := by
+  simp [ProtocolMachineState.resume, real_responder_protocol_state,
+    project_responder_protocol_state, challenge_responder_protocol_state,
+    challenge_protocol_ke_receiver_machine, challenge_ke_receiver_machine,
+    challenge_responder_program, protocol_ke_receiver_machine, ke_receiver_machine,
+    responder_program, lift_machine_to_type1, responder_resume,
+    challenge_responder_resume, project_responder_state, project_responder_phase,
+    project_responder_pending_first, project_responder_pending_outgoing]
+
 noncomputable def challenge_real_machines
     (gen : GroupGenerator) (sample : DDHSample.{0}) :
     List (AnyMachine SMCEasyUCPayload) :=
@@ -1303,7 +1774,6 @@ noncomputable def challenge_real_protocol
     (gen : GroupGenerator) (sample : DDHSample.{0}) :
     Protocol SMCEasyUCPayload where
   machines := challenge_real_machines gen sample
-  corruptible_machines := ∅
   unique_ids := challenge_real_unique_ids gen sample
   caller_has_matching_subroutine :=
     challenge_real_caller_has_matching_subroutine gen sample
@@ -1326,6 +1796,52 @@ noncomputable def challenge_real_protocol_states
     (gen : GroupGenerator) (sample : DDHSample.{0}) (n : ℕ) :
     List (AnyMachineState SMCEasyUCPayload) :=
   default_machine_states (challenge_real_machines gen sample) n
+
+/--
+把 witness 初始化的真实 protocol states 投影到 challenge-programmed protocol
+的状态空间。
+
+由于 `AnyMachineState` 是依赖对，真实 machine 和 challenge machine 的
+`LocalState` 类型不同，不能直接写成普通 list map；这里显式给出四个组件的
+投影。两台 `Forw` 功能机没有被 challenge 编程，仍使用默认初始状态。
+-/
+noncomputable def projected_real_protocol_states_of_witness
+    (gen : GroupGenerator) (n : ℕ) (witness : DDHRealWitness) :
+    List (AnyMachineState SMCEasyUCPayload) :=
+  [ ⟨⟨Unit, challenge_protocol_ke_sender_machine gen witness.to_sample⟩,
+      ⟨project_initiator_state
+        { (initiator_init n) with
+          group? := some witness.G
+          secret? := some witness.initiator_secret }⟩⟩
+  , ⟨⟨Unit, challenge_protocol_ke_receiver_machine gen witness.to_sample⟩,
+      ⟨project_responder_state witness.to_sample
+        { (responder_init n) with
+          group? := some witness.G
+          secret? := some witness.responder_secret }⟩⟩
+  , ⟨⟨Unit, forw_ke_forward_machine⟩,
+      forw_ke_forward_machine.program.init n⟩
+  , ⟨⟨Unit, forw_ke_return_machine⟩,
+      forw_ke_return_machine.program.init n⟩
+  ]
+
+/--
+witness 初始真实 states 投影后，正好是 challenge protocol 的默认初始 states。
+
+这是后续把 `H0 = H2` 从局部 machine 投影提升到 controller 初始状态的入口条件。
+-/
+theorem projected_real_protocol_states_of_witness_eq_challenge
+    (gen : GroupGenerator) (n : ℕ) (witness : DDHRealWitness) :
+    projected_real_protocol_states_of_witness gen n witness =
+      challenge_real_protocol_states gen witness.to_sample n := by
+  simp only [projected_real_protocol_states_of_witness, challenge_real_protocol_states,
+    challenge_real_machines, default_machine_states, List.map_cons, List.map_nil,
+    challenge_protocol_ke_sender_machine, challenge_protocol_ke_receiver_machine,
+    challenge_ke_sender_machine, challenge_ke_receiver_machine, lift_machine_to_type1,
+    challenge_initiator_program, challenge_responder_program, challenge_initiator_init,
+    challenge_responder_init, initiator_init, responder_init, project_initiator_state,
+    project_initiator_phase, project_responder_state, project_responder_phase,
+    project_responder_pending_first, project_responder_pending_outgoing,
+    Option.map_none]
 
 /-- challenge-programmed 真实协议的 `initial_states` 展开为默认状态列表。 -/
 theorem challenge_real_initial_states_eq_default
@@ -1374,8 +1890,7 @@ theorem challenge_real_is_main_machine_iff
       · refine ⟨?_, ?_, ?_⟩
         · simp [real_protocol, real_machines]
         · refine ⟨ke_receiver_to_smc_receiver_port, ?_, rfl, rfl⟩
-          simp [protocol_ke_receiver_machine, lift_machine_to_type1,
-            ke_receiver_machine]
+          simp [protocol_ke_receiver_machine, ke_receiver_machine]
         · simp [real_protocol, machine_ids_real_machines, machine_id_list,
             smc_receiver_ne_ke_sender,
             smc_receiver_ne_ke_receiver, smc_receiver_ne_forw_ke_forward,
@@ -1516,11 +2031,39 @@ noncomputable def challenge_real_setup_of_real_setup
     · rcases h_input with ⟨h_not_adv, h_label, h_main⟩
       exact Or.inr ⟨h_not_adv, h_label,
         (challenge_real_is_main_machine_iff gen sample p.dest).2 h_main⟩
-  corruption_allowed := by
-    intro mid h_mid
-    exact real_setup.corruption_allowed h_mid
   adv_port_destinations_restricted :=
     real_setup.adv_port_destinations_restricted
+
+/--
+把标准 ideal KE setup 搬到 component-programmed ideal protocol。
+
+该转换只用 `components.simulator_view` 编程 simulator，并只用
+`components.key_material` 编程 IdealKE。
+-/
+noncomputable def component_ideal_setup_of_ideal_setup
+    (gen : GroupGenerator.{0}) (components : IdealChallengeComponents)
+    {A : Adversary SMCEasyUCPayload}
+    {E : Environment SMCEasyUCPayload}
+    (ideal_setup :
+      ExecutionSetup
+        (mk_ideal_protocol (ideal_ke_functionality gen)).protocol
+        (simulator gen A) E) :
+    ExecutionSetup (ideal_protocol_of_components gen components)
+      (simulator_of_components gen components A) E where
+  corrupted_parties := ideal_setup.corrupted_parties
+  env_port_policy_holds := by
+    intro p hp
+    rcases ideal_setup.env_port_policy_holds p hp with h_backdoor | h_input
+    · exact Or.inl h_backdoor
+    · rcases h_input with ⟨h_not_adv, h_label, h_main⟩
+      exact Or.inr ⟨h_not_adv, h_label,
+        (ideal_protocol_of_components_is_main_machine_iff gen components p.dest).2 h_main⟩
+  adv_port_destinations_restricted := by
+    intro p hp
+    simp [simulator_of_components, simulator_with_view,
+      simulator_machine, simulator_to_environment_port] at hp
+    rcases hp with rfl
+    rfl
 
 /--
 把标准 ideal KE setup 搬到 DDH challenge-programmed ideal protocol。
@@ -1538,23 +2081,9 @@ noncomputable def challenge_ideal_setup_of_ideal_setup
         (mk_ideal_protocol (ideal_ke_functionality gen)).protocol
         (simulator gen A) E) :
     ExecutionSetup (challenge_ideal_protocol gen sample)
-      (challenge_simulator gen sample A) E where
-  corrupted_parties := ideal_setup.corrupted_parties
-  env_port_policy_holds := by
-    intro p hp
-    rcases ideal_setup.env_port_policy_holds p hp with h_backdoor | h_input
-    · exact Or.inl h_backdoor
-    · rcases h_input with ⟨h_not_adv, h_label, h_main⟩
-      exact Or.inr ⟨h_not_adv, h_label,
-        (challenge_ideal_is_main_machine_iff gen sample p.dest).2 h_main⟩
-  corruption_allowed := by
-    intro mid h_mid
-    exact ideal_setup.corruption_allowed h_mid
-  adv_port_destinations_restricted := by
-    intro p hp
-    simp [challenge_simulator, simulator_machine, simulator_to_environment_port] at hp
-    rcases hp with rfl
-    rfl
+      (challenge_simulator gen sample A) E :=
+  component_ideal_setup_of_ideal_setup gen
+    (ideal_challenge_components_of_sample sample) ideal_setup
 
 /-! ## Controller-level executions -/
 
@@ -1616,6 +2145,28 @@ noncomputable def challenge_execution_of_real_setup
   setup := challenge_real_setup_of_real_setup gen sample real_setup
 
 /--
+由标准 ideal KE setup 和分离 components 构造 component-programmed ideal
+controller execution。
+
+`components.simulator_view` 只进入 simulator；`components.key_material` 只进入
+IdealKE。
+-/
+noncomputable def component_ideal_execution_of_ideal_setup
+    (gen : GroupGenerator.{0})
+    {A : Adversary SMCEasyUCPayload}
+    {E : Environment SMCEasyUCPayload}
+    (ideal_setup :
+      ExecutionSetup
+        (mk_ideal_protocol (ideal_ke_functionality gen)).protocol
+        (simulator gen A) E)
+    (components : IdealChallengeComponents) :
+    ControllerExecution SMCEasyUCPayload where
+  protocol := ideal_protocol_of_components gen components
+  adversary := simulator_of_components gen components A
+  environment := E
+  setup := component_ideal_setup_of_ideal_setup gen components ideal_setup
+
+/--
 由标准 ideal KE setup 和 DDH challenge 构造 challenge-programmed ideal
 controller execution。
 
@@ -1632,11 +2183,9 @@ noncomputable def challenge_ideal_execution_of_ideal_setup
         (mk_ideal_protocol (ideal_ke_functionality gen)).protocol
         (simulator gen A) E)
     (sample : DDHSample.{0}) :
-    ControllerExecution SMCEasyUCPayload where
-  protocol := challenge_ideal_protocol gen sample
-  adversary := challenge_simulator gen sample A
-  environment := E
-  setup := challenge_ideal_setup_of_ideal_setup gen sample ideal_setup
+    ControllerExecution SMCEasyUCPayload :=
+  component_ideal_execution_of_ideal_setup gen ideal_setup
+    (ideal_challenge_components_of_sample sample)
 
 /-- 用真实 setup 和 DDH challenge 实例化 controller，并取环境输出分布。 -/
 noncomputable def challenge_controller_output_of_real_setup
@@ -1669,6 +2218,28 @@ theorem challenge_controller_output_of_real_setup_eq_default_states
     challenge_real_protocol_states,
     ControllerExecution.exec_with_protocol_states]
 
+/--
+固定 witness 时，challenge-programmed controller 也可以从真实 witness 初态
+投影得到的 protocol state list 开始运行。
+
+该定理把局部 machine 初态投影正式接入 controller execution，是后续证明
+`real_controller_output_of_witness = challenge_controller_output_of_real_setup`
+时需要的初始状态边界条件。
+-/
+theorem challenge_controller_output_of_real_setup_eq_projected_states
+    (gen : GroupGenerator.{0})
+    {A : Adversary SMCEasyUCPayload}
+    {E : Environment SMCEasyUCPayload}
+    (real_setup : ExecutionSetup (real_protocol gen) A E)
+    (witness : DDHRealWitness) (n : ℕ) :
+    challenge_controller_output_of_real_setup gen real_setup witness.to_sample n =
+      ControllerExecution.exec_with_protocol_states
+        (challenge_execution_of_real_setup gen real_setup witness.to_sample)
+        n
+        (projected_real_protocol_states_of_witness gen n witness) := by
+  rw [challenge_controller_output_of_real_setup_eq_default_states]
+  rw [projected_real_protocol_states_of_witness_eq_challenge]
+
 /-- 用 ideal setup 和 DDH challenge 实例化 controller，并取环境输出分布。 -/
 noncomputable def challenge_controller_output_of_ideal_setup
     (gen : GroupGenerator.{0})
@@ -1680,6 +2251,34 @@ noncomputable def challenge_controller_output_of_ideal_setup
         (simulator gen A) E)
     (sample : DDHSample.{0}) : Ensemble Bool :=
   ControllerExecution.exec (challenge_ideal_execution_of_ideal_setup gen ideal_setup sample)
+
+/-- 用 ideal setup 和分离 components 实例化 controller，并取环境输出分布。 -/
+noncomputable def component_controller_output_of_ideal_setup
+    (gen : GroupGenerator.{0})
+    {A : Adversary SMCEasyUCPayload}
+    {E : Environment SMCEasyUCPayload}
+    (ideal_setup :
+      ExecutionSetup
+        (mk_ideal_protocol (ideal_ke_functionality gen)).protocol
+        (simulator gen A) E)
+    (components : IdealChallengeComponents) : Ensemble Bool :=
+  ControllerExecution.exec
+    (component_ideal_execution_of_ideal_setup gen ideal_setup components)
+
+/-- DDH sample 编程的 ideal controller output 等于其 component projection 版本。 -/
+theorem challenge_controller_output_of_ideal_setup_eq_component
+    (gen : GroupGenerator.{0})
+    {A : Adversary SMCEasyUCPayload}
+    {E : Environment SMCEasyUCPayload}
+    (ideal_setup :
+      ExecutionSetup
+        (mk_ideal_protocol (ideal_ke_functionality gen)).protocol
+        (simulator gen A) E)
+    (sample : DDHSample.{0}) :
+    challenge_controller_output_of_ideal_setup gen ideal_setup sample =
+      component_controller_output_of_ideal_setup gen ideal_setup
+        (ideal_challenge_components_of_sample sample) := by
+  rfl
 
 /--
 在固定 witness 初始化的真实 protocol states 上运行真实 controller。
@@ -1807,6 +2406,46 @@ noncomputable def random_ideal_challenge_execution
   fun n =>
     (ddh_random gen n).bind fun sample =>
       challenge_controller_output_of_ideal_setup gen ideal_setup sample n
+
+/--
+公共群 component-programmed ideal controller experiment。
+
+它先按公共群 sampler 采样 `(fake shares for simulator, key for IdealKE)`，
+再运行 component-programmed ideal controller。
+-/
+noncomputable def public_group_ideal_component_execution
+    (gen : GroupGenerator.{0})
+    {A : Adversary SMCEasyUCPayload}
+    {E : Environment SMCEasyUCPayload}
+    (ideal_setup :
+      ExecutionSetup
+        (mk_ideal_protocol (ideal_ke_functionality gen)).protocol
+        (simulator gen A) E) : Ensemble Bool :=
+  fun n =>
+    (sample_public_group_ideal_components gen n).bind fun components =>
+      component_controller_output_of_ideal_setup gen ideal_setup components n
+
+/--
+DDH-random challenge-ideal execution 等于公共群 component-programmed ideal
+execution。
+
+这里使用的是已证明的低层采样等价；没有假设 IdealKE 泄漏 DH public shares。
+-/
+theorem random_ideal_challenge_execution_eq_public_group_component_execution
+    (gen : GroupGenerator.{0})
+    {A : Adversary SMCEasyUCPayload}
+    {E : Environment SMCEasyUCPayload}
+    (ideal_setup :
+      ExecutionSetup
+        (mk_ideal_protocol (ideal_ke_functionality gen)).protocol
+        (simulator gen A) E) :
+    random_ideal_challenge_execution gen ideal_setup =
+      public_group_ideal_component_execution gen ideal_setup := by
+  funext n
+  rw [public_group_ideal_component_execution,
+    sample_public_group_ideal_components_eq_sample_ideal_challenge_components]
+  simp [random_ideal_challenge_execution, sample_ideal_challenge_components,
+    challenge_controller_output_of_ideal_setup_eq_component]
 
 /-- DDH reduction 的两个游戏输出分布。 -/
 noncomputable def ddh_game_one_of_real_setup
