@@ -28,6 +28,6 @@ jobs:
         uses: leanprover/lean-action@v1
 
       - name: Build and deploy docs + blueprint
-        uses: leanprover-community/docgen-action@v1
+        uses: leanprover-community/docgen-action@main
         with:
           blueprint: true
