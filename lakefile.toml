@@ -14,5 +14,9 @@ name = "mathlib"
 scope = "leanprover-community"
 rev = "v4.27.0-rc1"
 
+[[require]]
+name = "checkdecls"
+git = "https://github.com/PatrickMassot/checkdecls.git"
+
 [[lean_lib]]
 name = "LeanCryptoProtocols"
