@@ -21,30 +21,47 @@
 \usepackage{fontspec}
 \usepackage[warnings-off={mathtools-colon,mathtools-overbracket}]{unicode-math}
 
+\newcommand{\NewCMPath}{}
+\IfFileExists{/opt/texlive/texdir/texmf-dist/fonts/opentype/public/newcomputermodern/NewCM10-Regular.otf}{%
+  \renewcommand{\NewCMPath}{/opt/texlive/texdir/texmf-dist/fonts/opentype/public/newcomputermodern/}%
+}{%
+  \IfFileExists{/usr/local/texlive/2022/texmf-dist/fonts/opentype/public/newcomputermodern/NewCM10-Regular.otf}{%
+    \renewcommand{\NewCMPath}{/usr/local/texlive/2022/texmf-dist/fonts/opentype/public/newcomputermodern/}%
+  }{%
+    \IfFileExists{/usr/local/texlive/2025/texmf-dist/fonts/opentype/public/newcomputermodern/NewCM10-Regular.otf}{%
+      \renewcommand{\NewCMPath}{/usr/local/texlive/2025/texmf-dist/fonts/opentype/public/newcomputermodern/}%
+    }{}%
+  }%
+}
+
 \setmainfont[
-  Path=/usr/local/texlive/2022/texmf-dist/fonts/opentype/public/lm/,
-  UprightFont=lmroman10-regular.otf,
-  BoldFont=lmroman10-bold.otf,
-  ItalicFont=lmroman10-italic.otf,
-  BoldItalicFont=lmroman10-bolditalic.otf,
-]{lmroman10}
+  Path=\NewCMPath,
+  Extension=.otf,
+  UprightFont=*-Regular,
+  BoldFont=*-Bold,
+  ItalicFont=*-Italic,
+  BoldItalicFont=*-BoldItalic,
+]{NewCM10}
 \setsansfont[
-  Path=/usr/local/texlive/2022/texmf-dist/fonts/opentype/public/lm/,
-  UprightFont=lmsans10-regular.otf,
-  BoldFont=lmsans10-bold.otf,
-  ItalicFont=lmsans10-oblique.otf,
-  BoldItalicFont=lmsans10-boldoblique.otf,
-]{lmsans10}
+  Path=\NewCMPath,
+  Extension=.otf,
+  UprightFont=*-Regular,
+  BoldFont=*-Bold,
+  ItalicFont=*-Oblique,
+  BoldItalicFont=*-BoldOblique,
+]{NewCMSans10}
 \setmonofont[
-  Path=/usr/local/texlive/2022/texmf-dist/fonts/opentype/public/lm/,
-  UprightFont=lmmono10-regular.otf,
-  BoldFont=lmmonolt10-bold.otf,
-  ItalicFont=lmmono10-italic.otf,
-  BoldItalicFont=lmmonolt10-boldoblique.otf,
-]{lmmono10}
+  Path=\NewCMPath,
+  Extension=.otf,
+  UprightFont=*-Regular,
+  BoldFont=*-Bold,
+  ItalicFont=*-Italic,
+  BoldItalicFont=*-BoldOblique,
+]{NewCMMono10}
 \setmathfont[
-  Path=/usr/local/texlive/2022/texmf-dist/fonts/opentype/public/lm-math/,
-]{latinmodern-math.otf}
+  Path=\NewCMPath,
+  Extension=.otf,
+]{NewCMMath-Regular}
 
 \input{macros/common}
 \input{macros/print}
