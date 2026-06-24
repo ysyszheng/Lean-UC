@@ -31,3 +31,4 @@ jobs:
         uses: leanprover-community/docgen-action@main
         with:
           blueprint: true
+          homepage: home_page

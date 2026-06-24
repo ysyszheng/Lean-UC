@@ -1,0 +1,6 @@
+title: LeanCryptoProtocols
+description: Formalized cryptographic protocol security in Lean
+url: "https://ysyszheng.github.io"
+baseurl: "/Lean-UC"
+theme: minima
+markdown: kramdown
