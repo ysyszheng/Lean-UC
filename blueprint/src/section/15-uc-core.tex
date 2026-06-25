@@ -2,548 +2,800 @@
 \section{UC Core Model}
 
 \newcommand{\leanid}[1]{\texttt{#1}}
+\newcommand{\Nat}{\mathbb{N}}
+\newcommand{\Id}{\mathcal{I}}
+\newcommand{\Env}{\mathsf{env}}
+\newcommand{\Adv}{\mathsf{adv}}
 \newcommand{\Mid}{\mathsf{MachineId}}
-\newcommand{\EnvId}{\mathsf{env\_id}}
-\newcommand{\AdvId}{\mathsf{adv\_id}}
-\newcommand{\Msg}{\mathsf{Message}}
-\newcommand{\Instr}{\mathsf{MessageInstruction}}
-\newcommand{\Envlp}{\mathsf{Envelope}}
-\newcommand{\Port}{\mathsf{CommPort}}
-\newcommand{\Pay}{\mathsf{Payload}}
-\newcommand{\Ctrl}{\mathsf{Controller}}
+\newcommand{\EnvId}{\Env}
+\newcommand{\AdvId}{\Adv}
+\newcommand{\Lab}{\mathcal{L}}
+\newcommand{\Port}{\mathcal{P}}
+\newcommand{\Instr}{\mathcal{T}}
+\newcommand{\Pay}{\mathcal{M}}
+\newcommand{\Msg}{\mathsf{Msg}}
+\newcommand{\Envelope}{\mathsf{Envelope}}
+\newcommand{\ActRes}{\mathsf{ActRes}}
+\newcommand{\Mach}{\mathsf{Mach}}
+\newcommand{\Prog}{\mathsf{Prog}}
+\newcommand{\Prot}{\Pi}
+\newcommand{\Setup}{\Sigma}
+\newcommand{\Func}{\mathcal{F}}
+\newcommand{\IdealFunc}{\Func}
+\newcommand{\Dummy}{\mathsf{Dum}}
+\newcommand{\DummyParty}{\Dummy}
+\newcommand{\IdealProtocol}{\mathsf{IdealProtocol}}
+\newcommand{\Ctrl}{\mathsf{Ctrl}}
 \newcommand{\Run}{\mathsf{Run}}
 \newcommand{\ProbOne}{\mathsf{probTrue}}
 \newcommand{\ExecDiff}{\mathsf{execDiff}}
-\newcommand{\Setup}{\mathsf{ExecutionSetup}}
-\newcommand{\IdealFunc}{\mathsf{IdealFunctionality}}
-\newcommand{\DummyParty}{\mathsf{DummyParty}}
-\newcommand{\IdealProtocol}{\mathsf{IdealProtocol}}
-\newcommand{\UCEmulates}{\mathsf{UCEmulatesAt}}
-\newcommand{\UCRealizes}{\mathsf{UCRealizesAt}}
-\newcommand{\SecLevel}{\mathsf{SecurityLevel}}
-\newcommand{\Negl}{\mathsf{Negligible}}
+\newcommand{\PMF}{\mathsf{PMF}}
+\newcommand{\Bool}{\mathsf{Bool}}
 \newcommand{\PPTM}{\mathsf{PPT}}
-\newcommand{\Corr}{\mathsf{C}}
+\newcommand{\Negl}{\mathsf{Negl}}
+\newcommand{\TV}{\mathsf{TV}}
+\newcommand{\SecLevel}{\mathsf{SecurityLevel}}
+\newcommand{\UCEmul}{\mathsf{UCEmul}}
+\newcommand{\UCEmulates}{\mathsf{UCEmulatesAt}}
+\newcommand{\UCReal}{\mathsf{UCReal}}
+\newcommand{\UCRealizes}{\mathsf{UCRealizesAt}}
+\newcommand{\Corr}{C}
 \emergencystretch=4em
 
-The UC core is the reusable execution model of the project.  It is not the
-EasyUC-paper interface: there are no hierarchical addresses
-\(\alpha,\beta\), no input guard \(G\), and no interface constructor
-\(\mathsf{MI}(F,A)\).  The current Lean model is built from natural-number
-machine identities, explicit communication ports, message-level instructions,
-proof-carrying execution setups, and the controller ensemble
-\[
-  \Ctrl.\leanid{exec}\;\sigma : \mathbb{N}\to\mathsf{PMF}\;\mathsf{Bool}.
-\]
-All definitions below are parametric in an arbitrary payload type \(\Pay\).
+The UC core is the reusable execution model used by the project.  It is not the
+EasyUC-paper presentation with hierarchical addresses, input guards, or an
+interface constructor \(\mathsf{MI}(F,A)\).  The formalization uses natural
+machine identities, explicit ports, message-level instructions, proof-carrying
+protocol and execution records, and a single controller that turns a legal
+execution setup into a distribution on the environment's final bit.
 
-\subsection{Machines and Communication Sets}
+This section describes the current core model at a mathematical level.  Each
+definition is linked to the corresponding Lean declarations, but the displayed
+notation is intentionally kept abstract: code names and record-field names are
+used only where they clarify the connection to the formalization.
 
-\begin{definition}[Machine identities and ports]
-\label{def:uc-machine-identities-ports}
-\lean{LeanCryptoProtocols.UC.MachineId, LeanCryptoProtocols.UC.env_id, LeanCryptoProtocols.UC.adv_id, LeanCryptoProtocols.UC.PortLabel, LeanCryptoProtocols.UC.CommPort}
+\subsection{Identities, Ports, and Messages}
+
+\begin{definition}[Machine identities]
+\label{def:uc-machine-identities}
+\lean{LeanCryptoProtocols.UC.MachineId, LeanCryptoProtocols.UC.env_id, LeanCryptoProtocols.UC.adv_id, LeanCryptoProtocols.UC.env_id_eq_zero, LeanCryptoProtocols.UC.adv_id_eq_one}
 \leanok
-Machine identities are natural numbers.  Two identities are reserved by the
-core:
+The set of machine identities is
 \[
-  \Mid=\mathbb{N},\qquad \EnvId=0,\qquad \AdvId=1.
+  \Id := \Nat .
 \]
-A communication port is a triple
+Two identities are reserved by the core:
 \[
-  p=(p.\leanid{owner},p.\leanid{dest},p.\leanid{label}) : \Port
+  \Env := 0,\qquad \Adv := 1 .
 \]
-with label
-\[
-  p.\leanid{label}\in
-  \{\leanid{input},\leanid{subroutineOutput},\leanid{backdoor}\}.
-\]
-The port carries a proof of well-formedness:
-\[
-\begin{aligned}
-  p.\leanid{owner} &\ne p.\leanid{dest},\\
-  p.\leanid{label}=\leanid{backdoor}
-    &\Longleftrightarrow
-      (p.\leanid{owner}=\AdvId\lor p.\leanid{dest}=\AdvId).
-\end{aligned}
-\]
-Thus adversarial communication is represented by ordinary routed messages on
-backdoor-labelled ports.  There is no separate adversarial delivery channel.
+Every protocol machine must use an identity outside \(\{\Env,\Adv\}\).  The
+identity space itself does not encode call-stack structure, party roles,
+sessions, or corruption status; those are modeled by ports, protocols, and
+execution setups.
 \end{definition}
 
-\begin{definition}[Messages and envelopes]
-\label{def:uc-messages-envelopes}
-\lean{LeanCryptoProtocols.UC.MessageInstruction, LeanCryptoProtocols.UC.Message, LeanCryptoProtocols.UC.Message.corrupt_instruction_implies_backdoor, LeanCryptoProtocols.UC.Envelope}
+\begin{definition}[Port labels]
+\label{def:uc-port-labels}
+\uses{def:uc-machine-identities}
+\lean{LeanCryptoProtocols.UC.PortLabel}
 \leanok
-A message stores a claimed source, a port label, a core instruction, and a
-payload:
+The core has exactly three port labels:
 \[
-  m=(m.\leanid{source},m.\leanid{label},
-      m.\leanid{instruction},m.\leanid{payload}) : \Msg\;\Pay .
+  \Lab=\{\mathsf{input},\mathsf{subout},\mathsf{backdoor}\}.
 \]
-The instruction is either ordinary traffic or a static-corruption request:
+An \(\mathsf{input}\) port represents a caller-to-subroutine activation.
+A \(\mathsf{subout}\) port represents a subroutine output back toward a caller
+or an external identity.  A \(\mathsf{backdoor}\) port represents adversarial
+control communication.  Corruption is not a fourth port label; it is a message
+instruction, defined below.
+\end{definition}
+
+\begin{definition}[Communication ports]
+\label{def:uc-comm-port}
+\uses{def:uc-machine-identities,def:uc-port-labels}
+\lean{LeanCryptoProtocols.UC.CommPort, LeanCryptoProtocols.UC.mk_input_port, LeanCryptoProtocols.UC.mk_subroutine_output_port, LeanCryptoProtocols.UC.mk_backdoor_port}
+\leanok
+Write \(\Port\) for the set of well-formed communication ports.  A
+communication port is a triple
 \[
-  m.\leanid{instruction}\in
-  \{\leanid{plain},\leanid{corrupt}(pid)\}.
+  p=(p.\mathsf{own},p.\mathsf{dst},p.\mathsf{label})
+     \in \Id\times\Id\times\Lab .
 \]
-The instruction is not a port label and it does not choose the envelope
-destination.  The core invariant is
+It is well formed exactly when
 \[
-  m.\leanid{instruction}=\leanid{corrupt}(pid)
+\begin{aligned}
+  p.\mathsf{own}&\ne p.\mathsf{dst},\\
+  p.\mathsf{label}=\mathsf{backdoor}
+    &\Longleftrightarrow
+      \bigl(p.\mathsf{own}=\Adv\lor p.\mathsf{dst}=\Adv\bigr).
+\end{aligned}
+\]
+Thus every adversary-facing port is a backdoor port, and every backdoor port
+has the adversary on one endpoint.  This condition only grants a communication
+route.  It does not grant corruption authority.
+\end{definition}
+
+\begin{definition}[Message instructions]
+\label{def:uc-message-instruction}
+\uses{def:uc-machine-identities,def:uc-port-labels}
+\lean{LeanCryptoProtocols.UC.MessageInstruction}
+\leanok
+A message carries a core instruction
+\[
+  t\in\Instr:=\{\mathsf{plain}\}\cup
+       \{\mathsf{corrupt}(j)\mid j\in\Id\}.
+\]
+The instruction \(\mathsf{plain}\) denotes ordinary payload delivery, including
+ordinary adversarial control messages sent over backdoor ports.  The instruction
+\(\mathsf{corrupt}(j)\) denotes a request whose target corrupted identity is
+the explicit identity \(j\).
+\end{definition}
+
+\begin{definition}[Messages]
+\label{def:uc-message}
+\uses{def:uc-machine-identities,def:uc-port-labels,def:uc-message-instruction}
+\lean{LeanCryptoProtocols.UC.Message, LeanCryptoProtocols.UC.Message.corrupt_instruction_implies_backdoor}
+\leanok
+Fix a payload space \(\Pay\).  Write \(\Msg(\Pay)\) for the set of
+well-formed messages over \(\Pay\).  For any set \(X\), write
+\[
+  \mathsf{Option}(X):=\{\mathsf{none}\}\cup
+  \{\mathsf{some}(x)\mid x\in X\}.
+\]
+A message \(m\in\Msg(\Pay)\) is a tuple
+\[
+  m=(m.\mathsf{src},m.\mathsf{label},m.\mathsf{instr},m.\mathsf{body})
+\]
+where
+\[
+  m.\mathsf{src}\in\mathsf{Option}(\Id),\quad
+  m.\mathsf{label}\in\Lab,\quad
+  m.\mathsf{instr}\in\Instr,\quad
+  m.\mathsf{body}\in\Pay .
+\]
+The source identity is part of the message syntax and is not trusted merely
+because it is present.  It is a claimed source identity carried inside the
+message.  Honest machines may set it to their own identity when the protocol
+expects that convention, but adversarial behavior may forge this field.
+
+The message-level well-formedness condition is
+\[
+  m.\mathsf{instr}=\mathsf{corrupt}(j)
   \Longrightarrow
-  m.\leanid{label}=\leanid{backdoor}.
+  m.\mathsf{label}=\mathsf{backdoor}.
 \]
-An envelope adds the destination port and proves that the port label and the
-message label agree:
+This condition ensures that corruption requests are syntactically backdoor
+messages, while still keeping corruption separate from the port-label language.
+\end{definition}
+
+\begin{definition}[Envelopes]
+\label{def:uc-envelope}
+\uses{def:uc-comm-port,def:uc-message}
+\lean{LeanCryptoProtocols.UC.Envelope}
+\leanok
+For a payload space \(\Pay\), write \(\Envelope(\Pay)\) for the set of
+well-formed envelopes over \(\Pay\).  An envelope pairs a destination port with
+a message:
 \[
-  e=(e.\leanid{port},e.\leanid{message}) : \Envlp\;\Pay,
-  \qquad e.\leanid{port.label}=e.\leanid{message.label}.
+  e=(p,m)\in \Envelope(\Pay).
 \]
-The destination identity is read from the port.  The source identity is stored
-inside the message; it is not trusted by itself, although honest machines
-normally set it to their own identity when the protocol requires that
-convention.
+It is well formed only if the port label and message label agree:
+\[
+  p.\mathsf{label}=m.\mathsf{label}.
+\]
+The destination identity used for routing is \(p.\mathsf{dst}\).  The claimed
+source metadata delivered to the receiver is \(m.\mathsf{src}\).
+\end{definition}
+
+\subsection{Machines and Protocols}
+
+\begin{definition}[Activation results]
+\label{def:uc-activation-result}
+\uses{def:uc-envelope}
+\lean{LeanCryptoProtocols.UC.ActivationResult}
+\leanok
+For a local state space \(S\) and payload space \(\Pay\), define the
+activation-result space
+\[
+  \ActRes(S,\Pay)
+  := S\times\mathsf{Option}(\Envelope(\Pay)).
+\]
+A single machine activation returns an element of this space:
+\[
+  r=(s',o)\in\ActRes(S,\Pay),\qquad
+  o\in\mathsf{Option}(\Envelope(\Pay)).
+\]
+The bounded controller repeatedly composes these one-envelope activations.
+Multi-message behavior must be represented by local state and subsequent
+activations.
 \end{definition}
 
 \begin{definition}[Machine programs]
-\label{def:uc-machine-programs}
-\lean{LeanCryptoProtocols.UC.ActivationResult, LeanCryptoProtocols.UC.MachineProgram, LeanCryptoProtocols.UC.Machine, LeanCryptoProtocols.UC.AnyMachine, LeanCryptoProtocols.UC.AnyMachineState}
+\label{def:uc-machine-program}
+\uses{def:uc-message,def:uc-activation-result}
+\lean{LeanCryptoProtocols.UC.MachineProgram}
 \leanok
-A machine is a proof-carrying identity, static communication set, and local
-program:
-\[
-  \mu=(\mu.\leanid{id},\mu.\leanid{communication\_set},
-      \mu.\leanid{program}) : \leanid{Machine}\;\Pay\;O .
-\]
-The local program provides an initial state, a receive transition, a resume
-distribution, a halt predicate, and an output function:
+A machine program is a stateful probabilistic transition system.  It consists
+of a local state type \(S\), an output type \(O\), and operations
 \[
 \begin{array}{rcl}
-\leanid{init} &:& \mathbb{N}\to \leanid{LocalState},\\
-\leanid{receive} &:&
-  \leanid{LocalState}\to \Msg\;\Pay\to \leanid{LocalState},\\
-\leanid{resume} &:&
-  \leanid{LocalState}\to
-    \mathsf{PMF}(\leanid{ActivationResult}\;\Pay\;\leanid{LocalState}),\\
-\leanid{is\_halted} &:& \leanid{LocalState}\to\mathsf{Bool},\\
-\leanid{output} &:& \leanid{LocalState}\to O .
+  \mathsf{init} &:& \Nat\to S,\\
+  \mathsf{recv} &:& S\to\Msg(\Pay)\to S,\\
+  \mathsf{resume} &:& S\to \PMF(\ActRes(S,\Pay)),\\
+  \mathsf{halted} &:& S\to\Bool,\\
+  \mathsf{out} &:& S\to O .
 \end{array}
 \]
-One activation emits at most one envelope.  The machine well-formedness proof
-requires every static port to be owned by \(\mu.\leanid{id}\), and requires at
-most one static port to each destination identity.  Heterogeneous machines and
-their local states are erased to \(\leanid{AnyMachine}\) and
-\(\leanid{AnyMachineState}\) when they are stored in a protocol.
+Here \(\PMF(X)\) denotes probability distributions over \(X\), and
+\(\Bool=\{\mathsf{false},\mathsf{true}\}\).
+The security parameter indexes initialization.  The resume transition is the
+only probabilistic transition in the core machine interface.
 \end{definition}
 
-\subsection{Protocols}
-
-\begin{definition}[Protocol shape]
-\label{def:uc-protocol-shape}
-\lean{LeanCryptoProtocols.UC.Protocol, LeanCryptoProtocols.UC.machine_ids, LeanCryptoProtocols.UC.default_machine_states}
+\begin{definition}[Machines]
+\label{def:uc-machine}
+\uses{def:uc-machine-identities,def:uc-comm-port,def:uc-machine-program}
+\lean{LeanCryptoProtocols.UC.Machine, LeanCryptoProtocols.UC.AnyMachine, LeanCryptoProtocols.UC.AnyMachineState, LeanCryptoProtocols.UC.AnyMachine.id, LeanCryptoProtocols.UC.AnyMachineState.id}
 \leanok
-A protocol is a list of machines plus proof obligations:
+A machine is a triple
 \[
-  \pi : \leanid{Protocol}\;\Pay .
+  \mu=(\mu.\mathsf{id},\Gamma_\mu,P_\mu)
 \]
-Its computational fields are
+where \(\mu.\mathsf{id}\in\Id\), \(\Gamma_\mu\) is a finite set of ports, and
+\(P_\mu\) is a program.  It satisfies two static well-formedness conditions:
 \[
 \begin{array}{ll}
-\pi.\leanid{machines}
-  &: \mathsf{List}(\leanid{AnyMachine}\;\Pay),\\
-\pi.\leanid{initial\_states}
-  &: \mathbb{N}\to
-     \mathsf{PMF}(\mathsf{List}(\leanid{AnyMachineState}\;\Pay)).
+\text{ownership:}
+  & \forall p\in\Gamma_\mu,\ p.\mathsf{own}=\mu.\mathsf{id},\\[0.3em]
+\text{unique destination:}
+  & \forall p,q\in\Gamma_\mu,\ 
+      p.\mathsf{dst}=q.\mathsf{dst}\Rightarrow p=q .
 \end{array}
 \]
-The default initial-state sampler initializes each listed machine with its own
-\(\leanid{init}\) function.  The proof fields assert that machine identities
-are unique, \(\EnvId\) and \(\AdvId\) are not protocol-machine identities,
-protocol machines never send directly to \(\EnvId\), and any static port whose
-destination is \(\AdvId\) is a backdoor port.
-
-Current Lean code does not yet include a protocol-level
-\(\leanid{corruptible\_machines}\) field.  The static corruption pattern used
-by a security theorem is stored at the execution-setup layer, described in
-Definition~\ref{def:uc-execution-setup}.
+The Lean code erases heterogeneous output types and local-state types when a
+protocol stores machines in one list; this erasure does not change the
+mathematical identity or communication set of a machine.
 \end{definition}
 
-\begin{definition}[Call graph and external identities]
-\label{def:uc-call-graph}
-\lean{LeanCryptoProtocols.UC.can_send_input_to, LeanCryptoProtocols.UC.can_send_subroutine_output_to, LeanCryptoProtocols.UC.is_caller_of_id, LeanCryptoProtocols.UC.is_subroutine_of_id, LeanCryptoProtocols.UC.Protocol.is_main_machine, LeanCryptoProtocols.UC.Protocol.is_internal_machine, LeanCryptoProtocols.UC.Protocol.is_external_identity_of}
+\begin{definition}[Port-induced call relations]
+\label{def:uc-port-relations}
+\uses{def:uc-machine,def:uc-port-labels}
+\lean{LeanCryptoProtocols.UC.can_send_input_to, LeanCryptoProtocols.UC.can_send_subroutine_output_to, LeanCryptoProtocols.UC.can_send_backdoor_to, LeanCryptoProtocols.UC.is_caller_of_id, LeanCryptoProtocols.UC.is_subroutine_of_id}
 \leanok
-The caller and subroutine relations are derived from ports:
+For a machine \(\mu\) and identity \(j\), define
 \[
 \begin{array}{rcl}
-\leanid{is\_caller\_of\_id}\;\mu\;j
-  &\Longleftrightarrow&
-  \mu \hbox{ has an input port to } j,\\
-\leanid{is\_subroutine\_of\_id}\;\mu\;j
-  &\Longleftrightarrow&
-  \mu \hbox{ has a subroutine-output port to } j .
+  \mu \leadsto_{\mathsf{in}} j
+    &\Longleftrightarrow&
+      \exists p\in\Gamma_\mu,\ 
+        p.\mathsf{dst}=j\land p.\mathsf{label}=\mathsf{input},\\[0.3em]
+  \mu \leadsto_{\mathsf{sub}} j
+    &\Longleftrightarrow&
+      \exists p\in\Gamma_\mu,\ 
+        p.\mathsf{dst}=j\land p.\mathsf{label}=\mathsf{subout},\\[0.3em]
+  \mu \leadsto_{\mathsf{bd}} j
+    &\Longleftrightarrow&
+      \exists p\in\Gamma_\mu,\ 
+        p.\mathsf{dst}=j\land p.\mathsf{label}=\mathsf{backdoor}.
 \end{array}
 \]
-The protocol proof fields require these two relations to match on internal
-protocol calls.  A machine is a main machine when it has an external identity:
-an identity that is not itself a protocol machine, but that is connected to the
-machine by a subroutine-output port.  The predicates
-\(\pi.\leanid{is\_main\_machine}\),
-\(\pi.\leanid{is\_internal\_machine}\), and
-\(\pi.\leanid{is\_external\_identity\_of}\) are the controller-facing
-abstractions of this call graph.
+The first relation says that \(\mu\) may call \(j\) as a subroutine; the second
+says that \(\mu\) may return subroutine output to \(j\).
 \end{definition}
 
-\begin{definition}[Environment, adversary, simulator, and setup]
-\label{def:uc-execution-setup}
-\lean{LeanCryptoProtocols.UC.Environment, LeanCryptoProtocols.UC.Adversary, LeanCryptoProtocols.UC.Simulator, LeanCryptoProtocols.UC.ExecutionSetup}
+\begin{definition}[Protocols]
+\label{def:uc-protocol}
+\uses{def:uc-machine-identities,def:uc-machine,def:uc-port-relations}
+\lean{LeanCryptoProtocols.UC.Protocol, LeanCryptoProtocols.UC.machine_ids, LeanCryptoProtocols.UC.default_machine_states, LeanCryptoProtocols.UC.Protocol.has_machine_id, LeanCryptoProtocols.UC.Protocol.machine_by_id?}
 \leanok
-The environment and adversary are machines with fixed identities:
+A protocol \(\Prot\) is a finite list of machines together with an initial-state
+sampler
 \[
-  E : \leanid{Environment}\;\Pay,\qquad
-  A : \leanid{Adversary}\;\Pay .
+  I_\Prot:\Nat\to\PMF(\text{lists of local states}).
 \]
-The environment has identity \(\EnvId\) and a unique backdoor port to
-\(\AdvId\).  The adversary has identity \(\AdvId\), a unique backdoor port to
-\(\EnvId\), and no field recording corrupted parties.  In the ideal world a
-simulator is definitionally an adversary machine:
-\[
-  \leanid{Simulator}\;\Pay := \leanid{Adversary}\;\Pay .
-\]
-For a concrete triple \((\pi,A,E)\), an execution is admitted through a setup
-witness
-\[
-  \sigma : \Setup\;\pi\;A\;E .
-\]
-The setup records the static corruption pattern:
-\[
-  \sigma.\leanid{corrupted\_parties} : \mathsf{Finset}\;\Mid .
-\]
-It also proves the execution-level port policies: environment ports either
-target the adversary backdoor or input a main protocol machine, and static
-adversary ports target only the environment.  Adversary-to-protocol control
-ports are not stored in the adversary record; they are added by the runtime
-overlay in Definition~\ref{def:uc-runtime-communication}.  Since the current
-code has no protocol-level corruptibility universe, membership in
-\(\sigma.\leanid{corrupted\_parties}\) is the controller's only core-level
-authorization test for a corruption instruction.
-\end{definition}
-
-\subsection{Ideal Functionalities and Ideal Protocols}
-
-\begin{definition}[Ideal functionality]
-\label{def:uc-ideal-functionality}
-\lean{LeanCryptoProtocols.UC.IdealFunctionality}
-\leanok
-An ideal functionality is a record.  We write
-\[
-  f:\IdealFunc\;\Pay .
-\]
-Besides the functionality machine, it stores the party identities and the
-interface data needed to generate dummy parties:
-\[
-\begin{array}{ll}
-f.\leanid{party\_ids}
-  &: \mathsf{List}\;\Mid,\\
-f.\leanid{functionality\_id}
-  &: \Mid,\\
-f.\leanid{machine}
-  &: \leanid{Machine}\;\Pay\;\mathsf{Unit},\\
-f.\leanid{party\_external\_ids}
-  &: \Mid\to\mathsf{Finset}\;\Mid,\\
-f.\leanid{wrap\_input}
-  &: \mathsf{Option}\;\Mid\to\Pay\to\Pay,\\
-f.\leanid{unwrap\_output}
-  &: \Pay\to\mathsf{Option}(\Mid\times\Pay).
-\end{array}
-\]
-The proof fields separate parties, external identities, the functionality,
-\(\EnvId\), and \(\AdvId\).  They also constrain the functionality machine's
-communication set: it may send subroutine outputs to parties and backdoor
-messages to the adversary, but not arbitrary traffic.
-\end{definition}
-
-\begin{definition}[Dummy parties]
-\label{def:uc-dummy-parties}
-\lean{LeanCryptoProtocols.UC.DummyParty, LeanCryptoProtocols.UC.DummyParty.to_any_machine, LeanCryptoProtocols.UC.mk_dummy_party, LeanCryptoProtocols.UC.mk_dummy_parties}
-\leanok
-For each \(pid\in f.\leanid{party\_ids}\), the core constructs
-\[
-  \leanid{mk\_dummy\_party}\;f\;pid : \DummyParty\;\Pay .
-\]
-The generated dummy party has one input port to
-\(f.\leanid{functionality\_id}\), subroutine-output ports to the external
-identities \(f.\leanid{party\_external\_ids}\;pid\), and no backdoor port.  Its
-resume behavior is fixed:
+The default sampler initializes every listed machine with its own initialization
+function.  The static protocol obligations are:
 \begin{itemize}
-\item A pending input is wrapped as
-\[
-  f.\leanid{wrap\_input}\;m.\leanid{source}\;m.\leanid{payload}
-\]
-and sent to \(f\).
-\item A pending subroutine output is parsed by
-\[
-  f.\leanid{unwrap\_output}\;m.\leanid{payload}.
-\]
-If parsing succeeds and the destination is one of the dummy party's external
-identities, the parsed payload is forwarded to that destination.
-\item A pending backdoor message produces no outgoing envelope.
+\item listed machine identities are pairwise distinct;
+\item \(\Env\) and \(\Adv\) are not protocol-machine identities;
+\item every internal input edge has the matching subroutine-output edge;
+\item every internal subroutine-output edge has the matching input edge;
+\item protocol machines have no static destination \(\Env\);
+\item any static destination \(\Adv\) is backdoor-labelled.
 \end{itemize}
-Thus dummy parties are generated once from the ideal functionality interface.
-The simulator does not directly control dummy parties.  Any corrupted-party
-leakage or command semantics in the ideal world must be implemented by the
-ideal functionality program and its backdoor/control interface.
+The current Lean code does not include a protocol-level set of corruptible
+machines.  Static corruption is fixed later by the execution setup.
 \end{definition}
 
-\begin{definition}[Ideal protocol generated from a functionality]
-\label{def:uc-ideal-protocol}
-\lean{LeanCryptoProtocols.UC.IdealProtocol, LeanCryptoProtocols.UC.mk_ideal_protocol, LeanCryptoProtocols.UC.mk_ideal_protocol_machine_ids, LeanCryptoProtocols.UC.mk_ideal_protocol_is_main_machine_iff, LeanCryptoProtocols.UC.mk_ideal_protocol_is_internal_machine_iff}
+\begin{definition}[Main machines, internal machines, and external identities]
+\label{def:uc-main-internal-external}
+\uses{def:uc-protocol,def:uc-port-relations}
+\lean{LeanCryptoProtocols.UC.Protocol.is_external_identity_of, LeanCryptoProtocols.UC.Protocol.is_main_machine, LeanCryptoProtocols.UC.Protocol.is_internal_machine, LeanCryptoProtocols.UC.Protocol.external_identities_of, LeanCryptoProtocols.UC.Protocol.main_machine_ids, LeanCryptoProtocols.UC.Protocol.internal_machine_ids, LeanCryptoProtocols.UC.Protocol.machine_is_subroutine_of, LeanCryptoProtocols.UC.Protocol.machine_is_caller_of, LeanCryptoProtocols.UC.Protocol.machine_is_subsidiary_of}
 \leanok
-The ideal protocol is produced by
+An identity \(x\) is an external identity of a protocol machine \(\mu\) when
 \[
-  \leanid{mk\_ideal\_protocol}\;f : \IdealProtocol\;\Pay .
+  \mu\in\Prot,\qquad
+  \mu \leadsto_{\mathsf{sub}} x,\qquad
+  x\notin\{\nu.\mathsf{id}\mid \nu\in\Prot\}.
 \]
-Its protocol machine list is
+A protocol machine is a main machine when it has at least one external identity.
+An internal machine is a protocol machine that is not main.  The controller uses
+these predicates to decide which machines the environment may activate directly
+and which non-system destinations can receive subroutine outputs back to the
+environment.
+\end{definition}
+
+\subsection{Execution Setups and Corruption Control}
+
+\begin{definition}[Environment, adversary, and simulator machines]
+\label{def:uc-env-adv-sim}
+\uses{def:uc-machine-identities,def:uc-machine,def:uc-comm-port}
+\lean{LeanCryptoProtocols.UC.Environment, LeanCryptoProtocols.UC.Adversary, LeanCryptoProtocols.UC.Simulator}
+\leanok
+An environment is a machine with identity \(\Env\), Boolean output, and a unique
+backdoor port to \(\Adv\).  An adversary is a machine with identity \(\Adv\),
+unit output, and a unique backdoor port to \(\Env\).
+
+The adversary record contains no corruption set.  Such a field would not by
+itself constrain the adversary program.  Corruption authority is instead fixed
+by the execution setup and checked by the controller.
+
+In the current Lean model a simulator is definitionally an adversary machine:
 \[
-  \leanid{mk\_dummy\_parties}\;f
-  \quad\hbox{followed by}\quad f.\leanid{machine}.
+  \mathsf{Simulator}(\Pay) := \mathsf{Adversary}(\Pay).
 \]
-The constructor proves the ordinary protocol-shape obligations.  The generated
-machine identities are exactly
+This says that the simulator occupies the adversarial slot of the ideal-world
+controller.
+\end{definition}
+
+\begin{definition}[Static corruption pattern]
+\label{def:uc-corruption-pattern}
+\uses{def:uc-machine-identities}
+\lean{LeanCryptoProtocols.UC.ExecutionSetup}
+\leanok
+A static corruption pattern is a finite set
 \[
-  f.\leanid{party\_ids} \mathbin{++} [f.\leanid{functionality\_id}],
+  \Corr\subseteq\Id .
 \]
-the generated main machines are exactly the dummy parties, and the unique
-internal machine is the ideal functionality.  There is no global adversary
-visibility set in this construction.  Simulator interaction with the ideal
-world is ordinary backdoor/control communication with the functionality; the
-functionality program decides what those payloads mean.
+In the formal record, this set is stored in the execution setup.  It is the
+only core-level authorization data used by the controller for corruption
+instructions.
+\end{definition}
+
+\begin{definition}[Execution setup]
+\label{def:uc-execution-setup}
+\uses{def:uc-protocol,def:uc-main-internal-external,def:uc-env-adv-sim,def:uc-corruption-pattern}
+\lean{LeanCryptoProtocols.UC.ExecutionSetup}
+\leanok
+For a protocol \(\Prot\), adversary \(A\), and environment \(E\), an execution
+setup is a proof-carrying witness
+\[
+  \sigma\in\Setup(\Prot,A,E).
+\]
+It stores a corruption pattern \(\Corr_\sigma\subseteq\Id\) and proves the
+execution-level port policies:
+\[
+\begin{array}{ll}
+\text{environment ports:}
+  & E\text{'s static ports go either to the adversary backdoor}\\
+  & \text{or to input ports of main protocol machines},\\[0.25em]
+\text{adversary ports:}
+  & A\text{'s static ports target the environment}.
+\end{array}
+\]
+Additional adversary-to-protocol control routes are not stored in the adversary
+machine.  They are added by the runtime overlay.
+\end{definition}
+
+\begin{definition}[Runtime communication overlay]
+\label{def:uc-runtime-overlay}
+\uses{def:uc-execution-setup,def:uc-comm-port,def:uc-main-internal-external}
+\lean{LeanCryptoProtocols.UC.ExecutionSetup.protocol_comm_set, LeanCryptoProtocols.UC.ExecutionSetup.backdoor_port_to_adversary, LeanCryptoProtocols.UC.ExecutionSetup.backdoor_port_from_adversary, LeanCryptoProtocols.UC.ExecutionSetup.env_input_port_to_main, LeanCryptoProtocols.UC.ExecutionSetup.runtime_communication_set}
+\leanok
+For a setup \(\sigma\) and active sender \(i\), the controller computes a
+runtime communication set
+\[
+  \Gamma_\sigma(i)\subseteq\Port .
+\]
+It consists of the sender's static ports plus the following overlay:
+\[
+\begin{array}{c|l}
+i & \Gamma_\sigma(i)\text{ additionally contains}\\ \hline
+\Env & \text{input ports to all main machines},\\
+\Adv & \text{backdoor ports from the adversary to all protocol machines},\\
+i\notin\{\Env,\Adv\}
+  & \text{a backdoor port from } i \text{ to the adversary, if }i\in\Prot.
+\end{array}
+\]
+This overlay is intentionally a control-communication capability.  It does not
+authorize corruption.  Ordinary backdoor payloads are still interpreted only by
+the receiving machine's program.
+\end{definition}
+
+\begin{definition}[Routes to system and external identities]
+\label{def:uc-route-targets}
+\uses{def:uc-execution-setup,def:uc-main-internal-external}
+\lean{LeanCryptoProtocols.UC.ExecutionSetup.routes_to_system_machine, LeanCryptoProtocols.UC.ExecutionSetup.routes_to_external_identity}
+\leanok
+The controller distinguishes system destinations from external destinations.
+An identity is a system destination if it is \(\Env\), \(\Adv\), or the identity
+of a protocol machine.  An identity is an external destination if it is an
+external identity of some main protocol machine.  This distinction is used only
+for routing; it does not validate a claimed source identity.
+\end{definition}
+
+\begin{definition}[Claimed source identity]
+\label{def:uc-source-validity}
+\uses{def:uc-message,def:uc-envelope,def:uc-execution-setup,def:uc-main-internal-external}
+\lean{LeanCryptoProtocols.UC.ExecutionSetup.environment_source_valid, LeanCryptoProtocols.UC.ExecutionSetup.sender_source_valid}
+The intended core model does not authenticate \(m.\mathsf{src}\) at the
+controller layer.  The controller authenticates the active sender by checking
+the envelope port owner \(p.\mathsf{own}\) against the active identity and by
+checking membership in the active identity's runtime communication set.  The
+field \(m.\mathsf{src}\) remains receiver-visible metadata: a machine program
+may inspect it, ignore it, or enforce a protocol-specific convention.
+
+\redcomment{TODO: the current Lean controller still contains stronger
+source-validity predicates.  Those predicates should be revised if the core
+semantics treats \(m.\mathsf{src}\) as a forgeable claimed source.}
+\end{definition}
+
+\begin{definition}[Corruption-instruction validity]
+\label{def:uc-corruption-validity}
+\uses{def:uc-message-instruction,def:uc-message,def:uc-envelope,def:uc-corruption-pattern,def:uc-execution-setup}
+\lean{LeanCryptoProtocols.UC.ExecutionSetup.corruption_instruction_valid}
+\leanok
+For an envelope \(e=(p,m)\) in setup \(\sigma\), define the corruption check by
+\[
+\mathsf{CorrValid}_\sigma(e)=
+\begin{cases}
+\top,
+  & m.\mathsf{instr}=\mathsf{plain},\\[0.25em]
+m.\mathsf{label}=\mathsf{backdoor}\land j\in\Corr_\sigma,
+  & m.\mathsf{instr}=\mathsf{corrupt}(j).
+\end{cases}
+\]
+The corrupted party identity is the explicit \(j\) in the instruction.  In
+particular, an ideal-world simulator may send a corruption instruction to the
+ideal functionality over a backdoor port; the controller checks \(j\in
+\Corr_\sigma\), and the ideal functionality program decides what leakage or
+command semantics this request has.
+\end{definition}
+
+\begin{definition}[Outgoing-envelope validity]
+\label{def:uc-outgoing-validity}
+\uses{def:uc-runtime-overlay,def:uc-corruption-validity}
+\lean{LeanCryptoProtocols.UC.ExecutionSetup.outgoing_message_valid}
+Before routing an emitted envelope \(e=(p,m)\) from active sender \(i\), the
+controller checks
+\[
+\mathsf{OutValid}_\sigma(i,e)
+\]
+defined by the conjunction of:
+\[
+\begin{array}{ll}
+\text{owner check:}
+  & p.\mathsf{own}=i,\\[0.25em]
+\text{communication check:}
+  & p\in\Gamma_\sigma(i),\\[0.25em]
+\text{corruption check:}
+  & \mathsf{CorrValid}_\sigma(e).
+\end{array}
+\]
+Invalid envelopes are not delivered.  The controller does not repair them or
+reinterpret their payloads.
 \end{definition}
 
 \subsection{Controller Execution}
 
-\begin{definition}[Runtime communication set]
-\label{def:uc-runtime-communication}
-\lean{LeanCryptoProtocols.UC.ExecutionSetup.protocol_comm_set, LeanCryptoProtocols.UC.ExecutionSetup.backdoor_port_to_adversary, LeanCryptoProtocols.UC.ExecutionSetup.backdoor_port_from_adversary, LeanCryptoProtocols.UC.ExecutionSetup.env_input_port_to_main, LeanCryptoProtocols.UC.ExecutionSetup.runtime_communication_set}
+\begin{definition}[Controller state]
+\label{def:uc-controller-state}
+\uses{def:uc-execution-setup,def:uc-machine}
+\lean{LeanCryptoProtocols.UC.ProtocolMachineState, LeanCryptoProtocols.UC.ProtocolMachineState.of_any_machine, LeanCryptoProtocols.UC.ProtocolMachineState.of_any_machine_state, LeanCryptoProtocols.UC.ControllerState, LeanCryptoProtocols.UC.Controller.initial_state, LeanCryptoProtocols.UC.Controller.initial_state_with_protocol_states}
 \leanok
-The controller does not route messages solely through a machine's static
-communication set.  For a setup \(\sigma\) and active sender \(i\), it computes
+For a setup \(\sigma\), a controller state stores
 \[
-  \sigma.\leanid{runtime\_communication\_set}\;i
-  : \mathsf{Finset}\;\Port .
+  s=(s_E,s_A,\vec{s}_\Prot,i)
 \]
-This set is the union of the sender's base ports and a runtime overlay:
-\[
-\begin{array}{ll}
-i=\EnvId
-  &: \hbox{environment ports plus inputs to all main machines},\\
-i=\AdvId
-  &: \hbox{adversary ports plus backdoors to all protocol machines},\\
-i\notin\{\EnvId,\AdvId\}
-  &: \hbox{protocol ports plus a backdoor to the adversary}.
-\end{array}
-\]
-This overlay gives control-communication routes, not corruption authority.
-Ordinary \(\leanid{plain}\) backdoor messages are routed if the envelope is
-otherwise valid, and the target machine program decides whether the payload has
-any effect.
+where \(s_E\) is the environment local state, \(s_A\) is the adversary local
+state, \(\vec{s}_\Prot\) is the list of protocol-machine local states, and
+\(i\in\Id\) is the active identity.  The initial active identity is \(\Env\).
 \end{definition}
 
-\begin{definition}[Outgoing-message validity]
-\label{def:uc-outgoing-validity}
-\lean{LeanCryptoProtocols.UC.ExecutionSetup.environment_source_valid, LeanCryptoProtocols.UC.ExecutionSetup.sender_source_valid, LeanCryptoProtocols.UC.ExecutionSetup.corruption_instruction_valid, LeanCryptoProtocols.UC.ExecutionSetup.outgoing_message_valid}
+\begin{definition}[Delivery and routing]
+\label{def:uc-delivery-routing}
+\uses{def:uc-controller-state,def:uc-route-targets,def:uc-envelope}
+\lean{LeanCryptoProtocols.UC.Controller.find_protocol_state?, LeanCryptoProtocols.UC.Controller.replace_protocol_state, LeanCryptoProtocols.UC.Controller.deliver_to_environment, LeanCryptoProtocols.UC.Controller.deliver_to_adversary, LeanCryptoProtocols.UC.Controller.deliver_to_protocol_machine, LeanCryptoProtocols.UC.Controller.route_envelope, LeanCryptoProtocols.UC.Controller.route_envelope_to_protocol_machine, LeanCryptoProtocols.UC.Controller.route_envelope_to_external_identity}
 \leanok
-Before routing an emitted envelope, the controller checks
-\[
-  \sigma.\leanid{outgoing\_message\_valid}\;i\;e .
-\]
-This predicate requires the envelope's port to be owned by the active sender
-and to occur in the sender's runtime communication set:
-\[
-  e.\leanid{port.owner}=i,\qquad
-  e.\leanid{port}\in
-    \sigma.\leanid{runtime\_communication\_set}\;i .
-\]
-It also checks the source convention.  If \(i=\EnvId\), a message sent to
-\(\AdvId\) must have source \(\leanid{none}\), while a message sent to a
-protocol machine must claim one of that machine's external identities.  If
-\(i\ne\EnvId\), the source must be \(\leanid{some}\;i\).
-
-The corruption-instruction check is exactly
-\[
-\begin{array}{rcl}
-\leanid{plain}
-  &\Longmapsto& \mathsf{True},\\
-\leanid{corrupt}(pid)
-  &\Longmapsto&
-    e.\leanid{message.label}=\leanid{backdoor}
-    \land pid\in\sigma.\leanid{corrupted\_parties}.
-\end{array}
-\]
-The corrupted identity is read only from the instruction.  It is not inferred
-from the sender, receiver, or claimed source.  In particular, an ideal-world
-simulator may send a backdoor envelope to an ideal functionality with
-\(\leanid{instruction}=\leanid{corrupt}(pid)\); the controller checks only
-whether \(pid\) is in the setup's static corruption pattern, and the
-functionality program defines the resulting leakage or command semantics.
+Routing is destination based.  If \(p.\mathsf{dst}=\Env\), the message is
+delivered to the environment and \(\Env\) becomes active.  If
+\(p.\mathsf{dst}=\Adv\), it is delivered to the adversary and \(\Adv\) becomes
+active.  If the destination is a protocol-machine identity, the corresponding
+protocol state receives the message and becomes active.  If a non-environment
+machine emits a subroutine-output envelope to an external identity, the
+controller delivers it to the environment.  All other destinations return
+control to the environment without delivery.
 \end{definition}
 
-\begin{definition}[Controller state and step]
+\begin{definition}[Handling an emitted envelope]
+\label{def:uc-handle-outgoing}
+\uses{def:uc-outgoing-validity,def:uc-delivery-routing}
+\lean{LeanCryptoProtocols.UC.Controller.handle_outgoing, LeanCryptoProtocols.UC.Controller.handle_outgoing_none, LeanCryptoProtocols.UC.Controller.handle_outgoing_some_valid, LeanCryptoProtocols.UC.Controller.handle_outgoing_some_invalid}
+\leanok
+After a machine resumes, the controller handles the optional emitted envelope.
+If there is no envelope, control returns to the environment.  If there is an
+envelope \(e\), the controller routes it exactly when
+\(\mathsf{OutValid}_\sigma(i,e)\) holds.  Otherwise the envelope is dropped and
+control returns to the environment.
+\end{definition}
+
+\begin{definition}[One controller step]
 \label{def:uc-controller-step}
-\lean{LeanCryptoProtocols.UC.ProtocolMachineState, LeanCryptoProtocols.UC.ControllerState, LeanCryptoProtocols.UC.Controller.initial_state_with_protocol_states, LeanCryptoProtocols.UC.Controller.route_envelope, LeanCryptoProtocols.UC.Controller.handle_outgoing, LeanCryptoProtocols.UC.Controller.step}
+\uses{def:uc-controller-state,def:uc-handle-outgoing}
+\lean{LeanCryptoProtocols.UC.Controller.environment_halted, LeanCryptoProtocols.UC.Controller.environment_output, LeanCryptoProtocols.UC.Controller.step_environment, LeanCryptoProtocols.UC.Controller.step_adversary, LeanCryptoProtocols.UC.Controller.step_protocol_machine, LeanCryptoProtocols.UC.Controller.step, LeanCryptoProtocols.UC.Controller.step_of_environment, LeanCryptoProtocols.UC.Controller.step_of_adversary, LeanCryptoProtocols.UC.Controller.step_of_protocol_machine}
 \leanok
-A controller state stores the local state of \(E\), the local state of \(A\),
-the list of protocol-machine states, and the active identity:
-\[
-  s=(s_E,s_A,s_\pi,i_{\mathsf{active}})
-    : \leanid{ControllerState}\;\sigma .
-\]
-The initial active identity is \(\EnvId\).  One step first checks whether the
-environment has halted.  If not, it resumes the active machine:
+One controller step first checks whether the environment has halted.  If it has,
+the state is unchanged.  Otherwise the controller resumes the currently active
+component:
 \[
 \begin{array}{c|c}
-i_{\mathsf{active}} & \hbox{resumed component}\\ \hline
-\EnvId & E,\\
-\AdvId & A,\\
-\hbox{protocol identity} & \hbox{the matching protocol machine}.
+\text{active identity} & \text{resumed component}\\ \hline
+\Env & E,\\
+\Adv & A,\\
+i\notin\{\Env,\Adv\} & \text{the protocol machine with identity }i.
 \end{array}
 \]
-The optional outgoing envelope is validated by
-Definition~\ref{def:uc-outgoing-validity}.  Valid envelopes are routed to the
-destination machine, adversary, or environment.  Invalid envelopes are dropped
-and control returns to the environment.
+The emitted envelope, if any, is then processed by
+Definition~\ref{def:uc-handle-outgoing}.
 \end{definition}
 
 \begin{definition}[Execution ensemble]
 \label{def:uc-execution-ensemble}
+\uses{def:uc-controller-step}
 \lean{LeanCryptoProtocols.UC.Controller.run_steps, LeanCryptoProtocols.UC.Controller.run_steps_with_status, LeanCryptoProtocols.UC.Controller.exec, LeanCryptoProtocols.UC.Controller.exec_with_status, LeanCryptoProtocols.UC.Controller.run_steps_output_eq_of_step_map}
 \leanok
 The controller runs for the fixed project step budget
-\(\leanid{LeanCryptoProtocols.max\_controller\_steps}\), stopping earlier if
-the environment halts.  The security parameter \(n\) indexes machine
-initialization and protocol initial-state sampling; it is not the step budget.
-For a setup \(\sigma\), the execution ensemble is
 \[
-  \Run(\sigma)=\Ctrl.\leanid{exec}\;\sigma
-  : \mathbb{N}\to\mathsf{PMF}\;\mathsf{Bool}.
+  T=\text{the configured maximum controller-step count},
 \]
-The observed bit is the final environment output:
+stopping earlier if the environment halts.  The security parameter \(n\) is
+used for initialization and protocol sampling; it is not the step budget.  A
+setup \(\sigma\) induces the Boolean-output ensemble
 \[
-  \Pr[\Run(\sigma,n)=1]
-  =\ProbOne(\Ctrl.\leanid{exec}\;\sigma\;n).
+  \Run_\sigma(n)\in\PMF(\Bool),
 \]
-The generic controller lifting lemma
-\(\leanid{run\_steps\_output\_eq\_of\_step\_map}\) is the intended way to turn
-step-level path matching into equality of controller output distributions.
+namely the distribution of the final environment output after controller
+execution at security parameter \(n\).
+
+The controller lifting lemma says that a step-level simulation relation,
+preserved for the bounded execution, can be lifted to equality of the resulting
+environment-output distributions.
+\end{definition}
+
+\subsection{Ideal Functionalities and Generated Ideal Protocols}
+
+\begin{definition}[Ideal functionality]
+\label{def:uc-ideal-functionality}
+\uses{def:uc-machine,def:uc-main-internal-external,def:uc-env-adv-sim}
+\lean{LeanCryptoProtocols.UC.IdealFunctionality}
+\leanok
+An ideal functionality is a machine together with enough interface data to
+generate dummy parties.  It contains:
+\[
+\begin{array}{ll}
+P_F & \text{a finite list of party identities},\\
+f   & \text{the functionality identity and functionality machine},\\
+X_j & \text{a nonempty set of external identities for each }j\in P_F,\\
+\mathsf{wrap} & \text{a map from environment-facing inputs to functionality payloads},\\
+\mathsf{unwrap} & \text{a partial parser for functionality outputs to dummy parties}.
+\end{array}
+\]
+The record proves that party identities, external identities, the functionality
+identity, \(\Env\), and \(\Adv\) are separated.  It also constrains the
+functionality machine's communication set: the functionality may output to
+dummy parties and may use backdoor communication with the adversary, but it may
+not use arbitrary destinations.
+\end{definition}
+
+\begin{definition}[Dummy parties]
+\label{def:uc-dummy-party}
+\uses{def:uc-ideal-functionality,def:uc-message,def:uc-envelope}
+\lean{LeanCryptoProtocols.UC.DummyParty, LeanCryptoProtocols.UC.DummyParty.to_any_machine, LeanCryptoProtocols.UC.mk_dummy_party, LeanCryptoProtocols.UC.mk_dummy_parties, LeanCryptoProtocols.UC.mk_dummy_parties_party_ids}
+\leanok
+For each ideal party identity \(j\in P_F\), the core constructs a dummy party
+\[
+  D_j=\Dummy(F,j).
+\]
+Its static communication set has one input port to the functionality and
+subroutine-output ports to the external identities \(X_j\).  It has no backdoor
+port.  Operationally, a dummy party only forwards:
+\[
+\begin{array}{ll}
+\text{environment input to }D_j
+  & \mapsto \mathsf{wrap}(\text{source},\text{payload})\text{ sent to }F,\\
+\text{functionality output to }D_j
+  & \mapsto \mathsf{unwrap}(\text{payload})\text{ forwarded to an external identity},\\
+\text{backdoor input}
+  & \mapsto \text{no outgoing envelope}.
+\end{array}
+\]
+The simulator does not directly control dummy parties.  Corrupted-party leakage
+or corrupted-party commands in the ideal world must be implemented by the ideal
+functionality program and exposed through its own backdoor/control interface.
+\end{definition}
+
+\begin{definition}[Ideal protocol generated from a functionality]
+\label{def:uc-ideal-protocol}
+\uses{def:uc-protocol,def:uc-dummy-party}
+\lean{LeanCryptoProtocols.UC.IdealProtocol, LeanCryptoProtocols.UC.mk_ideal_protocol, LeanCryptoProtocols.UC.mk_ideal_protocol_machine_ids, LeanCryptoProtocols.UC.mk_ideal_protocol_is_main_machine_iff, LeanCryptoProtocols.UC.mk_ideal_protocol_is_internal_machine_iff}
+\leanok
+The generated ideal protocol is
+\[
+  \Phi_F=\mathsf{IdealProtocol}(F).
+\]
+Its machine list is the list of all generated dummy parties followed by the
+functionality machine:
+\[
+  [D_j\mid j\in P_F]\; ++\; [F].
+\]
+The constructor proves the protocol obligations.  The main machines are exactly
+the dummy parties, and the internal machine is the ideal functionality.  There
+is no global adversary-visible set in this construction; simulator interaction
+with the ideal world goes through the functionality's ordinary backdoor/control
+ports.
+\end{definition}
+
+\subsection{Indistinguishability}
+
+\begin{definition}[Ensembles and polynomial time]
+\label{def:uc-ensembles-ppt}
+\uses{def:uc-execution-ensemble}
+\lean{LeanCryptoProtocols.UC.Ensemble, LeanCryptoProtocols.UC.PPT, LeanCryptoProtocols.UC.ppt_congr, LeanCryptoProtocols.UC.ppt_comp, LeanCryptoProtocols.UC.ppt_const, LeanCryptoProtocols.UC.ppt_pure, LeanCryptoProtocols.UC.ppt_bind}
+\leanok
+An ensemble over a type \(\alpha\) is a family
+\[
+  X:\Nat\to\PMF(\alpha).
+\]
+The project uses an abstract predicate \(\PPTM(\cdot)\) for polynomial-time
+objects.  It is shared by machines, adversaries, simulators, environments,
+distinguishers, reductions, and samplers.  The Lean interface supplies closure
+rules for congruence, deterministic composition, constants, pure probabilistic
+return, and probabilistic bind.
+\end{definition}
+
+\begin{definition}[Security levels and negligible functions]
+\label{def:uc-security-levels}
+\uses{def:uc-ensembles-ppt}
+\lean{LeanCryptoProtocols.UC.Negligible, LeanCryptoProtocols.UC.SecurityLevel, LeanCryptoProtocols.UC.zeroBound}
+\leanok
+The security level is one of
+\[
+  \ell\in\{\mathsf{perfect},\mathsf{statistical},\mathsf{computational}\}.
+\]
+Negligible functions are functions \(\varepsilon:\Nat\to\mathbb{R}\) with
+superpolynomial decay in the mathlib sense.  They are used for both statistical
+distance bounds and computational distinguishing advantages.
+\end{definition}
+
+\begin{definition}[Probability and statistical distance]
+\label{def:uc-probability-distance}
+\uses{def:uc-security-levels}
+\lean{LeanCryptoProtocols.UC.probTrue, LeanCryptoProtocols.UC.pmfMass, LeanCryptoProtocols.UC.TVDist, LeanCryptoProtocols.UC.StatisticalIndistBound}
+\leanok
+For a Boolean distribution \(B\), write
+\[
+  \Pr[B=1]
+\]
+for its probability of returning true.  For finite \(\alpha\), the statistical
+distance between \(P,Q\in\PMF(\alpha)\) is
+\[
+  \TV(P,Q)=\frac12\sum_{a\in\alpha}|P(a)-Q(a)|.
+\]
+A statistical bound for ensembles \(X,Y\) is a function
+\(\varepsilon\) satisfying
+\[
+  \forall n,\quad \TV(X_n,Y_n)\le \varepsilon(n).
+\]
+\end{definition}
+
+\begin{definition}[Perfect, statistical, and computational indistinguishability]
+\label{def:uc-indistinguishability}
+\uses{def:uc-probability-distance,def:uc-ensembles-ppt}
+\lean{LeanCryptoProtocols.UC.PerfectIndist, LeanCryptoProtocols.UC.StatisticalIndist, LeanCryptoProtocols.UC.Distinguisher, LeanCryptoProtocols.UC.DistOutput, LeanCryptoProtocols.UC.DistAdvantage, LeanCryptoProtocols.UC.ComputationalIndist, LeanCryptoProtocols.UC.Indistinguishable}
+\leanok
+Perfect indistinguishability is pointwise equality of ensembles.  Statistical
+indistinguishability is the existence of a negligible statistical-distance
+bound.  Computational indistinguishability quantifies over all PPT
+distinguishers \(D\), where \(D(x,n)\) outputs a Boolean distribution:
+\[
+  \forall D,\ \PPTM(D)\Rightarrow
+  \exists\varepsilon,\ \Negl(\varepsilon)\land
+  \forall n,\ 
+    \left|
+      \Pr[D(X_n,n)=1]-\Pr[D(Y_n,n)=1]
+    \right|
+    \le \varepsilon(n).
+\]
+The unified predicate dispatches to one of these three meanings according to
+the chosen security level.
 \end{definition}
 
 \subsection{UC Security Definitions}
 
-\begin{definition}[Indistinguishability primitives]
-\label{def:uc-indistinguishability-primitives}
-\lean{LeanCryptoProtocols.UC.Ensemble, LeanCryptoProtocols.UC.PPT, LeanCryptoProtocols.UC.Negligible, LeanCryptoProtocols.UC.SecurityLevel, LeanCryptoProtocols.UC.probTrue, LeanCryptoProtocols.UC.Distinguisher, LeanCryptoProtocols.UC.ComputationalIndist}
-\leanok
-An ensemble is a security-parameter-indexed family of distributions:
-\[
-  X : \mathbb{N}\to\mathsf{PMF}\;\alpha .
-\]
-The project uses three security levels:
-\[
-  \SecLevel=\{
-    \leanid{perfect},\leanid{statistical},\leanid{computational}
-  \}.
-\]
-Perfect indistinguishability is pointwise equality of ensembles.  Statistical
-indistinguishability uses a negligible bound on total variation distance.
-Computational indistinguishability quantifies over all polynomial-time
-distinguishers
-\[
-  D : \leanid{Distinguisher}\;\alpha,\qquad
-  D.\leanid{run}:\alpha\to\mathbb{N}\to\mathsf{PMF}\;\mathsf{Bool}.
-\]
-The predicate \(\PPTM\) is an abstract complexity interface shared by
-machines, distinguishers, and reductions.
-\end{definition}
-
 \begin{definition}[Execution difference]
 \label{def:uc-exec-diff}
+\uses{def:uc-execution-ensemble,def:uc-probability-distance}
 \lean{LeanCryptoProtocols.UC.exec_diff}
 \leanok
-For real and ideal setups over the same environment, Lean defines
+For real and ideal setups \(\sigma_r,\sigma_i\) using the same environment, the
+Boolean execution difference at security parameter \(n\) is
 \[
-\begin{aligned}
-  \ExecDiff(\sigma_r,\sigma_i,n)
-    =
-      \left|
-        \ProbOne(\Ctrl.\leanid{exec}\;\sigma_r\;n)
-        -
-        \ProbOne(\Ctrl.\leanid{exec}\;\sigma_i\;n)
-      \right|.
-\end{aligned}
+  \Delta(\sigma_r,\sigma_i,n)
+  =
+  \left|
+    \Pr[\Run_{\sigma_r}(n)=1]
+    -
+    \Pr[\Run_{\sigma_i}(n)=1]
+  \right|.
 \]
-Perfect UC security is stated as equality of the full
-\(\mathsf{PMF}\;\mathsf{Bool}\).  Statistical and computational UC security
-use \(\ExecDiff\) with a negligible upper bound.
+Perfect security uses equality of the full Boolean distributions.  Statistical
+and computational security use the real-valued difference \(\Delta\) with a
+negligible upper bound.
 \end{definition}
 
 \begin{definition}[UC-emulation at a static corruption pattern]
 \label{def:uc-emulation}
+\uses{def:uc-exec-diff,def:uc-execution-setup,def:uc-indistinguishability,def:uc-env-adv-sim}
 \lean{LeanCryptoProtocols.UC.UCEmulatesAt, LeanCryptoProtocols.UC.UCEmulatesPerfect, LeanCryptoProtocols.UC.UCEmulatesPerfectWithCorruption, LeanCryptoProtocols.UC.UCEmulatesStatistical, LeanCryptoProtocols.UC.UCEmulatesStatisticalWithCorruption, LeanCryptoProtocols.UC.UCEmulatesComputational, LeanCryptoProtocols.UC.UCEmulatesComputationalWithCorruption}
 \leanok
-For protocols \(\pi\) and \(\varphi\), Lean defines
+Let \(\Prot\) and \(\Phi\) be protocols and let \(\Corr\subseteq\Id\) be the
+static corruption pattern.  UC-emulation at level \(\ell\) asserts
 \[
-  \UCEmulates(\ell,\Corr,\pi,\varphi)
+  \UCEmul_\ell(\Corr,\Prot,\Phi).
 \]
-by cases on \(\ell:\SecLevel\).  The finite set \(\Corr\) is the static
-corruption pattern being compared.  It is a theorem parameter, not a field of
-the adversary or simulator.
-
-In the computational branch the shape is
+For the computational level, the quantifier structure is
 \[
 \begin{aligned}
 &\forall A,\ \PPTM(A)\Rightarrow
-  \exists S,\ \PPTM(S)\land\\
-&\quad
-  \forall E,\ \PPTM(E)\Rightarrow\\
-&\quad
-  \forall\sigma_r:\Setup\;\pi\;A\;E,\;
-  \forall\sigma_i:\Setup\;\varphi\;S\;E,\\
-&\quad
-  \sigma_r.\leanid{corrupted\_parties}=\Corr
-  \Rightarrow
-  \sigma_i.\leanid{corrupted\_parties}=\Corr
-  \Rightarrow\\
-&\quad
-  \exists\epsilon,\ \Negl(\epsilon)\land
-  \forall n,\ \ExecDiff(\sigma_r,\sigma_i,n)\le\epsilon(n).
+  \exists S,\ \PPTM(S)\land {}\\
+&\forall E,\ \PPTM(E)\Rightarrow
+  \forall\sigma_r,\sigma_i,\ {}\\
+&\quad \Corr_{\sigma_r}=\Corr
+  \land \Corr_{\sigma_i}=\Corr \Rightarrow {}\\
+&\quad \exists\varepsilon,\ \Negl(\varepsilon)\land {}\\
+&\quad \forall n,\ 
+  \Delta(\sigma_r,\sigma_i,n)\le\varepsilon(n),
 \end{aligned}
 \]
-The perfect branch replaces the negligible bound by equality of controller
-output distributions for all \(n\).  The statistical branch omits the
-\(\PPTM\) premises but keeps the negligible \(\ExecDiff\) bound.  The aliases
-without \(\leanid{WithCorruption}\) instantiate \(\Corr=\varnothing\); the
-\(\leanid{WithCorruption}\) aliases keep \(\Corr\) explicit.
+where
+\[
+  \sigma_r\in\Setup(\Prot,A,E),
+  \qquad
+  \sigma_i\in\Setup(\Phi,S,E).
+\]
+The perfect level replaces the negligible bound by equality of controller
+output distributions for every \(n\).  The statistical level drops the PPT
+premises but keeps the negligible \(\Delta\) bound.  The no-corruption aliases
+instantiate \(\Corr=\varnothing\); the explicit-corruption aliases keep
+\(\Corr\) as a parameter.
 \end{definition}
 
 \begin{definition}[UC-realization at a static corruption pattern]
 \label{def:uc-realization}
+\uses{def:uc-emulation,def:uc-ideal-protocol}
 \lean{LeanCryptoProtocols.UC.UCRealizesAt, LeanCryptoProtocols.UC.UCRealizesPerfect, LeanCryptoProtocols.UC.UCRealizesPerfectWithCorruption, LeanCryptoProtocols.UC.UCRealizesStatistical, LeanCryptoProtocols.UC.UCRealizesStatisticalWithCorruption, LeanCryptoProtocols.UC.UCRealizesComputational, LeanCryptoProtocols.UC.UCRealizesComputationalWithCorruption}
 \leanok
-UC-realization is UC-emulation against the ideal protocol generated from an
-ideal functionality:
+A protocol \(\Prot\) UC-realizes an ideal functionality \(F\) when it UC-emulates
+the generated ideal protocol \(\Phi_F\):
 \[
-  \UCRealizes(\ell,\Corr,\pi,f)
-  \quad\hbox{uses}\quad
-  \varphi_f=(\leanid{mk\_ideal\_protocol}\;f).\leanid{protocol}.
+  \UCReal_\ell(\Corr,\Prot,F)
+  \quad\text{means}\quad
+  \UCEmul_\ell(\Corr,\Prot,\Phi_F).
 \]
-There is no additional global visibility premise.  If the ideal world needs a
-simulator interface, the ideal functionality machine must expose the relevant
-backdoor/control behavior through its own communication set and program.  The
-same finite set \(\Corr\) is required of the real and ideal setups:
-\[
-  \sigma_r.\leanid{corrupted\_parties}=\Corr,\qquad
-  \sigma_i.\leanid{corrupted\_parties}=\Corr .
-\]
-Again, the no-corruption aliases instantiate \(\Corr=\varnothing\), while the
-\(\leanid{WithCorruption}\) aliases keep the static pattern explicit.
+The same static corruption pattern \(\Corr\) is required in the real and ideal
+setups.  The simulator has no direct control channel to dummy parties.  Any
+ideal-world corruption leakage or command interface must be part of the ideal
+functionality's own program.
 \end{definition}
 
 \subsection{Composition Theorem}
