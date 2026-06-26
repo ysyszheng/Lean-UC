@@ -111,7 +111,7 @@ def build_init_observe_envelope (ids : KEIds) :
       message := {
         source := some ids.functionality_id
         label := .backdoor
-        payload := .ke_plain
+        payload := .ke
           (.observe_init
             ids.initiator_external_id
             ids.responder_external_id)
@@ -125,7 +125,7 @@ def build_confirm_observe_envelope (ids : KEIds) :
       message := {
         source := some ids.functionality_id
         label := .backdoor
-        payload := .ke_plain .observe_confirm
+        payload := .ke .observe_confirm
       }
       label_matches := rfl
     }
@@ -136,7 +136,17 @@ def build_initiator_key_envelope (ids : KEIds)
     message := {
       source := some ids.functionality_id
       label := .subroutineOutput
-      payload := .ke_from_functionality ids.initiator_external_id (.key shared_key)
+      instruction := .dummyDestination ids.initiator_external_id
+      payload := .ke (.key shared_key)
+      instruction_valid := by
+        refine ⟨?_, ?_, ?_⟩
+        · intro pid h
+          cases h
+        · intro caller_id h
+          cases h
+        · intro dest_id h
+          cases h
+          rfl
     }
     label_matches := rfl
   }
@@ -147,7 +157,17 @@ def build_responder_key_envelope (ids : KEIds)
     message := {
       source := some ids.functionality_id
       label := .subroutineOutput
-      payload := .ke_from_functionality ids.responder_external_id (.key shared_key)
+      instruction := .dummyDestination ids.responder_external_id
+      payload := .ke (.key shared_key)
+      instruction_valid := by
+        refine ⟨?_, ?_, ?_⟩
+        · intro pid h
+          cases h
+        · intro caller_id h
+          cases h
+        · intro dest_id h
+          cases h
+          rfl
     }
     label_matches := rfl
   }
@@ -185,69 +205,71 @@ def receive_release_confirm (ids : KEIds)
       pending_outgoing :=
         some (build_initiator_key_envelope ids key_material.shared_key) }
 
-def receive (ids : KEIds) (st : State) (msg : Message SMCEasyUCPayload) :
-      State :=
-    match st.phase, msg.source, msg.label, msg.payload with
-    | .kstate1, some src, .input, .ke_plain .init =>
-        if _h_src : src = ids.initiator_id then
-          receive_init ids st
-        else
-          st
-    | .kstate1, _, .input, .ke_to_functionality caller_source .init =>
-        if _h_src : caller_source = some ids.initiator_external_id then
-          receive_init ids st
-        else
-          st
-    | .kstate2 initiator_id responder_id key_material, some src, .backdoor,
-        .ke_plain .release_init =>
-        if _h_src : src = adv_id then
-          receive_release_init ids st initiator_id responder_id key_material
-        else
-          st
-    | .kstate3 initiator_id responder_id key_material, some src, .input,
-        .ke_plain .confirm =>
-        if _h_src : src = ids.responder_id then
-          receive_confirm ids st initiator_id responder_id key_material
-        else
-          st
-    | .kstate3 initiator_id responder_id key_material, _, .input,
-        .ke_to_functionality caller_source .confirm =>
-        if _h_src : caller_source = some ids.responder_external_id then
-          receive_confirm ids st initiator_id responder_id key_material
-        else
-          st
-    | .kstate4 _initiator_id _responder_id key_material, some src, .backdoor,
-        .ke_plain .release_confirm =>
-        if _h_src : src = adv_id then
-          receive_release_confirm ids st key_material
-        else
-          st
-    | _, _, _, _ =>
-        st
-
-noncomputable def resume (ids : KEIds) (st : State) :
-      PMF (ActivationResult SMCEasyUCPayload State) :=
-    match st.pending_outgoing with
-    | none =>
-        match st.phase with
-        | .kstate2_waiting_sample initiator_id responder_id =>
-            (ids.sample_key_material st.sec_param).bind fun key_material =>
-              PMF.pure {
-                state := { st with
-                  phase := .kstate2 initiator_id responder_id key_material
-                  pending_outgoing := none }
-                outgoing? := some (build_init_observe_envelope ids)
-              }
-        | _ =>
+noncomputable def activate (ids : KEIds) (st : State)
+    (incoming? : Option (Message SMCEasyUCPayload)) :
+    PMF (ActivationResult SMCEasyUCPayload State) :=
+  let st' :=
+    match incoming? with
+    | none => st
+    | some msg =>
+        match st.phase, msg.source, msg.label, msg.instruction, msg.payload with
+        | .kstate1, some src, .input, .plain, .ke .init =>
+            if _h_src : src = ids.initiator_id then
+              receive_init ids st
+            else
+              st
+        | .kstate1, _, .input, .dummyCaller caller_id, .ke .init =>
+            if _h_src : caller_id = ids.initiator_external_id then
+              receive_init ids st
+            else
+              st
+        | .kstate2 initiator_id responder_id key_material, some src, .backdoor,
+            .plain, .ke .release_init =>
+            if _h_src : src = adv_id then
+              receive_release_init ids st initiator_id responder_id key_material
+            else
+              st
+        | .kstate3 initiator_id responder_id key_material, some src, .input,
+            .plain, .ke .confirm =>
+            if _h_src : src = ids.responder_id then
+              receive_confirm ids st initiator_id responder_id key_material
+            else
+              st
+        | .kstate3 initiator_id responder_id key_material, _, .input,
+            .dummyCaller caller_id, .ke .confirm =>
+            if _h_src : caller_id = ids.responder_external_id then
+              receive_confirm ids st initiator_id responder_id key_material
+            else
+              st
+        | .kstate4 _initiator_id _responder_id key_material, some src, .backdoor,
+            .plain, .ke .release_confirm =>
+            if _h_src : src = adv_id then
+              receive_release_confirm ids st key_material
+            else
+              st
+        | _, _, _, _, _ =>
+            st
+  match st'.pending_outgoing with
+  | none =>
+      match st'.phase with
+      | .kstate2_waiting_sample initiator_id responder_id =>
+          (ids.sample_key_material st'.sec_param).bind fun key_material =>
             PMF.pure {
-              state := st
-              outgoing? := none
+              state := { st' with
+                phase := .kstate2 initiator_id responder_id key_material
+                pending_outgoing := none }
+              outgoing? := some (build_init_observe_envelope ids)
             }
-    | some envelope =>
-        PMF.pure {
-          state := { st with pending_outgoing := none }
-          outgoing? := some envelope
-        }
+      | _ =>
+          PMF.pure {
+            state := st'
+            outgoing? := none
+          }
+  | some envelope =>
+      PMF.pure {
+        state := { st' with pending_outgoing := none }
+        outgoing? := some envelope
+      }
 
 def communication_set (ids : KEIds) : Finset CommPort :=
   { ke_initiator_port ids, ke_responder_port ids, ke_adversary_port ids }
@@ -258,8 +280,7 @@ noncomputable def machine (ids : KEIds) : Machine SMCEasyUCPayload Unit where
   program := {
     LocalState := State
     init := init_state
-    receive := receive ids
-    resume := resume ids
+    activate := activate ids
     is_halted := fun _ => false
     output := fun _ => ()
   }
@@ -354,19 +375,6 @@ noncomputable def IdealKE : KEIds → IdealFunctionality SMCEasyUCPayload
           exact ⟨ids.responder_external_separated.2.2.1,
             ids.responder_external_separated.2.2.2.1,
             ids.responder_external_separated.2.2.2.2⟩
-      dummy_local_state := Option (Message SMCEasyUCPayload)
-      dummy_init := fun _ => none
-      dummy_receive := fun _ msg => some msg
-      dummy_pending := fun st => st
-      dummy_clear := fun _ => none
-      wrap_input := fun caller_source payload =>
-        match payload with
-        | .ke_plain body => .ke_to_functionality caller_source body
-        | other => other
-      unwrap_output := fun payload =>
-        match payload with
-        | .ke_from_functionality dest body => some (dest, .ke_plain body)
-        | _ => none
       functionality_ports_to_parties := by
         intro pid h_pid
         have h_cases : pid = ids.initiator_id ∨ pid = ids.responder_id := by

@@ -26,11 +26,11 @@ namespace LeanCryptoProtocols.UC
 
 - 参与方 identities；
 - 每个参与方对应的 external identities；
-- 如何把环境输入包装成送给功能机的 payload；
-- 如何把功能机返回的 payload 解析成目标 identity 与外发 payload。
+- 功能机自身的通信约束。
 -/
 structure IdealFunctionality (Payload : Type u) where
   party_ids : List MachineId
+  party_external_ids : MachineId → Finset MachineId
   functionality_id : MachineId
   machine : Machine Payload Unit
   id_matches : machine.id = functionality_id
@@ -38,7 +38,6 @@ structure IdealFunctionality (Payload : Type u) where
   parties_separated : env_id ∉ party_ids ∧ adv_id ∉ party_ids
   functionality_separated : functionality_id ≠ env_id ∧ functionality_id ≠ adv_id
   functionality_not_party : functionality_id ∉ party_ids
-  party_external_ids : MachineId → Finset MachineId
   external_ids_nonempty :
     ∀ pid ∈ party_ids, (party_external_ids pid).Nonempty
   external_ids_outside_parties :
@@ -46,13 +45,6 @@ structure IdealFunctionality (Payload : Type u) where
   external_ids_separated :
     ∀ pid ∈ party_ids, ∀ ext ∈ party_external_ids pid,
       ext ≠ functionality_id ∧ ext ≠ env_id ∧ ext ≠ adv_id
-  dummy_local_state : Type
-  dummy_init : ℕ → dummy_local_state
-  dummy_receive : dummy_local_state → Message Payload → dummy_local_state
-  dummy_pending : dummy_local_state → Option (Message Payload)
-  dummy_clear : dummy_local_state → dummy_local_state
-  wrap_input : Option MachineId → Payload → Payload
-  unwrap_output : Payload → Option (MachineId × Payload)
   functionality_ports_to_parties :
     ∀ pid ∈ party_ids,
       ∃ p ∈ machine.communication_set, p.dest = pid ∧ p.label = .subroutineOutput
@@ -85,7 +77,8 @@ structure DummyParty (Payload : Type u) where
         (p.dest ∈ external_ids ∧ p.label = .subroutineOutput)
 
 /-- 把 dummy party 打包成异质 machine。 -/
-def DummyParty.to_any_machine {Payload : Type u} (d : DummyParty Payload) : AnyMachine Payload :=
+def DummyParty.to_any_machine {Payload : Type u} (d : DummyParty Payload) :
+    AnyMachine Payload :=
   ⟨Unit, d.machine⟩
 
 namespace DummyPartyImpl
@@ -220,55 +213,66 @@ noncomputable def communication_set {Payload : Type u} (f : IdealFunctionality P
 noncomputable def program {Payload : Type u} (f : IdealFunctionality Payload)
     (party_id : MachineId) (h_party : party_id ∈ f.party_ids) :
     MachineProgram Payload Unit where
-  LocalState := f.dummy_local_state
-  init := f.dummy_init
-  receive := fun st msg => f.dummy_receive st msg
-  resume st :=
-    let cleared := f.dummy_clear st
-    match f.dummy_pending st with
+  LocalState := Unit
+  init := fun _ => ()
+  activate st incoming? :=
+    match incoming? with
     | none =>
         PMF.pure {
-          state := cleared
+          state := st
           outgoing? := none
         }
     | some msg =>
         match msg.label with
         | .input =>
-            let out_msg : Message Payload := {
-              source := some party_id
-              label := .input
-              payload := f.wrap_input msg.source msg.payload
-            }
-            PMF.pure {
-              state := cleared
-              outgoing? := some {
-                port := input_port f party_id h_party
-                message := out_msg
-                label_matches := rfl
-              }
-            }
-        | .subroutineOutput =>
-            match f.unwrap_output msg.payload with
-            | none =>
+            match msg.source, msg.instruction with
+            | some caller_id, .plain =>
+                let out_msg : Message Payload := {
+                  source := some party_id
+                  label := .input
+                  instruction := .dummyCaller caller_id
+                  payload := msg.payload
+                  instruction_valid := by
+                    refine ⟨?_, ?_, ?_⟩
+                    · intro pid h
+                      cases h
+                    · intro caller_id' h
+                      cases h
+                      rfl
+                    · intro dest_id h
+                      cases h
+                }
                 PMF.pure {
-                  state := cleared
+                  state := st
+                  outgoing? := some {
+                    port := input_port f party_id h_party
+                    message := out_msg
+                    label_matches := rfl
+                  }
+                }
+            | _, _ =>
+                PMF.pure {
+                  state := st
                   outgoing? := none
                 }
-            | some (dest_id, payload') =>
+        | .subroutineOutput =>
+            match msg.instruction with
+            | .dummyDestination dest_id =>
                 match h_lookup : output_port f party_id h_party dest_id with
                 | none =>
                     PMF.pure {
-                      state := cleared
+                      state := st
                       outgoing? := none
                     }
                 | some port =>
                     let out_msg : Message Payload := {
                       source := some party_id
                       label := .subroutineOutput
-                      payload := payload'
+                      instruction := .plain
+                      payload := msg.payload
                     }
                     PMF.pure {
-                      state := cleared
+                      state := st
                       outgoing? := some {
                         port := port
                         message := out_msg
@@ -284,9 +288,14 @@ noncomputable def program {Payload : Type u} (f : IdealFunctionality Payload)
                           simpa [out_msg] using h_port_label
                       }
                     }
+            | _ =>
+                PMF.pure {
+                  state := st
+                  outgoing? := none
+                }
         | .backdoor =>
             PMF.pure {
-              state := cleared
+              state := st
               outgoing? := none
             }
   is_halted := fun _ => false

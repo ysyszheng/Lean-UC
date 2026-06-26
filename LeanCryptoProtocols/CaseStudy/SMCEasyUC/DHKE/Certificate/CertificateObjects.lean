@@ -275,7 +275,7 @@ def initiator_key_envelope
     message := {
       source := some ke_sender_id
       label := .subroutineOutput
-      payload := .ke_plain (.key shared_key)
+      payload := .ke (.key shared_key)
     }
     label_matches := rfl
   }
@@ -287,7 +287,7 @@ def responder_key_envelope
     message := {
       source := some ke_receiver_id
       label := .subroutineOutput
-      payload := .ke_plain (.key shared_key)
+      payload := .ke (.key shared_key)
     }
     label_matches := rfl
   }
@@ -296,12 +296,12 @@ def initiator_receive (st : InitiatorState)
     (msg : Message SMCEasyUCPayload) :
     InitiatorState :=
   match st.phase, msg.label, msg.payload with
-  | .waiting_init, .input, .ke_plain .init =>
+  | .waiting_init, .input, .ke .init =>
       { st with
         phase := .waiting_second
         pending_action := some .send_first }
   | .waiting_second, .subroutineOutput,
-      .forw_from_functionality _ (.delivered _ _ (.ke_second share)) =>
+      .forw (.delivered _ _ (.ke_second share)) =>
       { st with pending_action := some (.output_key share) }
   | _, _, _ =>
       st
@@ -311,7 +311,7 @@ def responder_receive (st : ResponderState)
     ResponderState :=
   match st.phase, msg.label, msg.payload with
   | .waiting_first, .subroutineOutput,
-      .forw_from_functionality _ (.delivered _ _ (.ke_first share)) =>
+      .forw (.delivered _ _ (.ke_first share)) =>
       { st with pending_peer_share := some share }
   | _, _, _ =>
       st
@@ -345,7 +345,7 @@ noncomputable def initiator_resume
             message := {
               source := some ke_sender_id
               label := .input
-              payload := .forw_plain
+              payload := .forw
                 (.submit ke_sender_id ke_receiver_id (.ke_first secret.public_share))
             }
             label_matches := rfl
@@ -404,7 +404,7 @@ noncomputable def responder_resume
                 message := {
                   source := some ke_receiver_id
                   label := .input
-                  payload := .forw_plain
+                  payload := .forw
                     (.submit ke_receiver_id ke_sender_id
                       (.ke_second secret.public_share))
                 }
@@ -416,8 +416,66 @@ noncomputable def initiator_program
     (gen : GroupGenerator) : MachineProgram SMCEasyUCPayload Unit where
   LocalState := InitiatorState
   init := initiator_init
-  receive := initiator_receive
-  resume := initiator_resume gen
+  activate := fun st incoming? =>
+    let st' :=
+      match incoming? with
+      | none => st
+      | some msg =>
+          match st.phase, msg.label, msg.payload with
+          | .waiting_init, .input, .ke .init =>
+              { st with
+                phase := .waiting_second
+                pending_action := some .send_first }
+          | .waiting_second, .subroutineOutput,
+              .forw (.delivered _ _ (.ke_second share)) =>
+              { st with pending_action := some (.output_key share) }
+          | _, _, _ =>
+              st
+    match st'.pending_action with
+    | none =>
+        PMF.pure {
+          state := st'
+          outgoing? := none
+        }
+    | some .send_first =>
+        (match st'.secret? with
+          | some secret => PMF.pure secret
+          | none =>
+              match st'.group? with
+              | some G => sample_dh_secret_in_group G
+              | none => sample_dh_secret gen st'.sec_param).bind fun secret =>
+          PMF.pure {
+            state := {
+              st' with
+                secret? := some secret
+                phase := .waiting_second
+                pending_action := none
+            }
+            outgoing? := some {
+              port := ke_sender_to_forw_ke_forward_port
+              message := {
+                source := some ke_sender_id
+                label := .input
+                payload := .forw
+                  (.submit ke_sender_id ke_receiver_id (.ke_first secret.public_share))
+              }
+              label_matches := rfl
+            }
+          }
+    | some (.output_key peer_share) =>
+        let shared_key :=
+          match st'.secret? with
+          | some secret => derive_key_from_secret secret peer_share
+          | none => default_shared_key
+        PMF.pure {
+          state := {
+            st' with
+              secret? := none
+              phase := .done
+              pending_action := none
+          }
+          outgoing? := some (initiator_key_envelope shared_key)
+        }
   is_halted := fun _ => false
   output := fun _ => ()
 
@@ -425,8 +483,58 @@ noncomputable def responder_program
     (gen : GroupGenerator) : MachineProgram SMCEasyUCPayload Unit where
   LocalState := ResponderState
   init := responder_init
-  receive := responder_receive
-  resume := responder_resume gen
+  activate := fun st incoming? =>
+    let st' :=
+      match incoming? with
+      | none => st
+      | some msg =>
+          match st.phase, msg.label, msg.payload with
+          | .waiting_first, .subroutineOutput,
+              .forw (.delivered _ _ (.ke_first share)) =>
+              { st with pending_peer_share := some share }
+          | _, _, _ =>
+              st
+    match st'.pending_outgoing with
+    | some env =>
+        PMF.pure {
+          state := { st' with pending_outgoing := none, phase := .done }
+          outgoing? := some env
+        }
+    | none =>
+        match st'.pending_peer_share with
+        | none =>
+            PMF.pure {
+              state := st'
+              outgoing? := none
+            }
+        | some peer_share =>
+            (match st'.secret? with
+              | some secret => PMF.pure secret
+              | none =>
+                  match st'.group? with
+                  | some G => sample_dh_secret_in_group G
+                  | none => sample_dh_secret gen st'.sec_param).bind fun secret =>
+              let shared_key := derive_key_from_secret secret peer_share
+              PMF.pure {
+                state := {
+                  st' with
+                    pending_peer_share := none
+                    secret? := some secret
+                    phase := .sent_second
+                    pending_outgoing := some (responder_key_envelope shared_key)
+                }
+                outgoing? := some {
+                  port := ke_receiver_to_forw_ke_return_port
+                  message := {
+                    source := some ke_receiver_id
+                    label := .input
+                    payload := .forw
+                      (.submit ke_receiver_id ke_sender_id
+                        (.ke_second secret.public_share))
+                  }
+                  label_matches := rfl
+                }
+              }
   is_halted := fun _ => false
   output := fun _ => ()
 

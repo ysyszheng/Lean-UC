@@ -38,6 +38,8 @@ inductive PortLabel where
 inductive MessageInstruction where
   | plain
   | corrupt (party_id : MachineId)
+  | dummyCaller (caller_id : MachineId)
+  | dummyDestination (dest_id : MachineId)
   deriving Repr, DecidableEq, Inhabited
 
 /-- 一个端口由发送者 identity、接收者 identity 和标签组成。 -/
@@ -56,9 +58,11 @@ structure Message (Payload : Type u) where
   label : PortLabel
   instruction : MessageInstruction := .plain
   payload : Payload
-  instruction_valid : ∀ pid, instruction = .corrupt pid → label = .backdoor := by
-    intro pid h
-    cases h
+  instruction_valid :
+    (∀ pid, instruction = .corrupt pid → label = .backdoor) ∧
+      (∀ caller_id, instruction = .dummyCaller caller_id → label = .input) ∧
+      (∀ dest_id, instruction = .dummyDestination dest_id → label = .subroutineOutput) := by
+    refine ⟨?_, ?_, ?_⟩ <;> intro id h <;> cases h
   deriving Repr, DecidableEq
 
 namespace Message
@@ -67,7 +71,19 @@ namespace Message
 theorem corrupt_instruction_implies_backdoor {Payload : Type u}
     (msg : Message Payload) {pid : MachineId} :
     msg.instruction = .corrupt pid → msg.label = .backdoor :=
-  msg.instruction_valid pid
+  msg.instruction_valid.1 pid
+
+/-- Dummy caller 指令只能出现在 input 消息上。 -/
+theorem dummy_caller_instruction_implies_input {Payload : Type u}
+    (msg : Message Payload) {caller_id : MachineId} :
+    msg.instruction = .dummyCaller caller_id → msg.label = .input :=
+  msg.instruction_valid.2.1 caller_id
+
+/-- Dummy destination 指令只能出现在 subroutine-output 消息上。 -/
+theorem dummy_destination_instruction_implies_subroutine_output {Payload : Type u}
+    (msg : Message Payload) {dest_id : MachineId} :
+    msg.instruction = .dummyDestination dest_id → msg.label = .subroutineOutput :=
+  msg.instruction_valid.2.2 dest_id
 
 end Message
 
@@ -90,16 +106,14 @@ machine 的局部程序。
 这里把局部状态类型封装在程序对象里；协议建模者需要写的是：
 
 - 初始状态；
-- 收到一条消息后如何把消息写入本地状态；
-- 当前恢复执行时如何运行到“发送一条消息或挂起”为止；
+- 在当前状态下收到可选消息后，如何运行到“发送一条消息或挂起”为止；
 - 是否已经 halt；
 - 局部输出提取函数；
 -/
 structure MachineProgram (Payload : Type u) (Out : Type v) where
   LocalState : Type w
   init : ℕ → LocalState
-  receive : LocalState → Message Payload → LocalState
-  resume : LocalState → PMF (ActivationResult Payload LocalState)
+  activate : LocalState → Option (Message Payload) → PMF (ActivationResult Payload LocalState)
   is_halted : LocalState → Bool
   output : LocalState → Out
 

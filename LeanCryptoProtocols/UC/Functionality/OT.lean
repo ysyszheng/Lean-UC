@@ -60,19 +60,8 @@ inductive OTBody where
   | receiver_resp (sid : Sid) (ssid : Ssid) (out : OTOutput)
   deriving Repr, DecidableEq
 
-/--
-OT 理想世界里统一使用的 payload。
-
-- `plain`：环境与 dummy party 之间的原始业务消息；
-- `to_functionality`：
-  dummy party 转发给功能机的消息，额外带上原始调用者 identity；
-- `from_functionality`：功能机返回给 dummy party 的消息，额外带上目标 identity。
--/
-inductive OTPayload where
-  | plain (body : OTBody)
-  | to_functionality (caller_source : Option MachineId) (body : OTBody)
-  | from_functionality (destination : MachineId) (body : OTBody)
-  deriving Repr, DecidableEq
+/-- OT 理想世界里统一使用的 payload。 -/
+abbrev OTPayload : Type := OTBody
 
 /-- OT 两方与功能机、external identities 的统一命名。 -/
 structure OTIds where
@@ -190,8 +179,17 @@ def build_receiver_response (ids : OTIds)
   message := {
     source := some ids.functionality_id
     label := .subroutineOutput
-    payload := .from_functionality ids.receiver_external_id
-      (.receiver_resp sid ssid (F_OT sender choice))
+    instruction := .dummyDestination ids.receiver_external_id
+    payload := .receiver_resp sid ssid (F_OT sender choice)
+    instruction_valid := by
+      refine ⟨?_, ?_, ?_⟩
+      · intro pid h
+        cases h
+      · intro caller_id h
+        cases h
+      · intro dest_id h
+        cases h
+        rfl
   }
   label_matches := rfl
 }
@@ -226,32 +224,51 @@ def receive_receiver (ids : OTIds) (st : State)
     | none =>
         { st with receiver_reqs := receiver_reqs }
 
-def receive (ids : OTIds) (st : State) (msg : Message OTPayload) :
-    State :=
-  match msg.source, msg.label, msg.payload with
-  | some src, .input, .to_functionality _ (.sender_req sid ssid sender) =>
-      if _h_src : src = ids.sender_id then
-        receive_sender ids st sid ssid sender
-      else
-        st
-  | some src, .input, .to_functionality _ (.receiver_req sid ssid choice) =>
-      if _h_src : src = ids.receiver_id then
-        receive_receiver ids st sid ssid choice
-      else
-        st
-  | _, _, _ =>
-      st
-
-noncomputable def resume (st : State) : PMF (ActivationResult OTPayload State) :=
-  match st.pending_outgoing with
+noncomputable def activate (ids : OTIds) (st : State)
+    (incoming? : Option (Message OTPayload)) :
+    PMF (ActivationResult OTPayload State) :=
+  let st' :=
+    match incoming? with
+    | none => st
+    | some msg =>
+        match msg.source, msg.label, msg.instruction, msg.payload with
+        | some src, .input, .plain, .sender_req sid ssid sender =>
+            if _h_src : src = ids.sender_id then
+              receive_sender ids st sid ssid sender
+            else
+              st
+        | some src, .input, .dummyCaller caller_id, .sender_req sid ssid sender =>
+            if _h_src : src = ids.sender_id then
+              if _h_caller : caller_id = ids.sender_external_id then
+                receive_sender ids st sid ssid sender
+              else
+                st
+            else
+              st
+        | some src, .input, .plain, .receiver_req sid ssid choice =>
+            if _h_src : src = ids.receiver_id then
+              receive_receiver ids st sid ssid choice
+            else
+              st
+        | some src, .input, .dummyCaller caller_id, .receiver_req sid ssid choice =>
+            if _h_src : src = ids.receiver_id then
+              if _h_caller : caller_id = ids.receiver_external_id then
+                receive_receiver ids st sid ssid choice
+              else
+                st
+            else
+              st
+        | _, _, _, _ =>
+            st
+  match st'.pending_outgoing with
   | none =>
       PMF.pure {
-        state := st
+        state := st'
         outgoing? := none
       }
   | some envelope =>
       PMF.pure {
-        state := { st with pending_outgoing := none }
+        state := { st' with pending_outgoing := none }
         outgoing? := some envelope
       }
 
@@ -264,8 +281,7 @@ noncomputable def machine (ids : OTIds) : Machine OTPayload Unit where
   program := {
     LocalState := State
     init := fun _ => init_state
-    receive := receive ids
-    resume := resume
+    activate := activate ids
     is_halted := fun _ => false
     output := fun _ => ()
   }
@@ -372,19 +388,6 @@ noncomputable def IdealOT : OTIds → IdealFunctionality OTPayload
           exact ⟨ids.receiver_external_separated.2.2.1,
             ids.receiver_external_separated.2.2.2.1,
             ids.receiver_external_separated.2.2.2.2⟩
-      dummy_local_state := Option (Message OTPayload)
-      dummy_init := fun _ => none
-      dummy_receive := fun _ msg => some msg
-      dummy_pending := fun st => st
-      dummy_clear := fun _ => none
-      wrap_input := fun caller_source payload =>
-        match payload with
-        | .plain body => .to_functionality caller_source body
-        | other => other
-      unwrap_output := fun payload =>
-        match payload with
-        | .from_functionality dest body => some (dest, .plain body)
-        | _ => none
       functionality_ports_to_parties := by
         intro pid h_pid
         have h_cases : pid = ids.sender_id ∨ pid = ids.receiver_id := by

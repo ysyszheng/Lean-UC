@@ -133,15 +133,13 @@ noncomputable def lift_machine_to_type1
   program := {
     LocalState := ULift m.program.LocalState
     init := fun n => ⟨m.program.init n⟩
-    receive := fun st msg =>
-      ⟨m.program.receive st.down msg⟩
-    resume := fun st =>
+    activate := fun st incoming? =>
       PMF.map
         (fun r => {
           state := ⟨r.state⟩
           outgoing? := r.outgoing?
         })
-        (m.program.resume st.down)
+        (m.program.activate st.down incoming?)
     is_halted := fun st => m.program.is_halted st.down
     output := fun st => m.program.output st.down
   }

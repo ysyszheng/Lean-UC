@@ -444,18 +444,18 @@ def ke_receiver_init (n : ℕ) : KEReceiverState := {
 def smc_sender_receive (st : SMCSenderState)
     (msg : Message SMCEasyUCPayload) : SMCSenderState :=
   match msg.payload with
-  | .smc_plain (.send sid plaintext) =>
+  | .smc (.send sid plaintext) =>
       { waiting_message := some (sid, plaintext)
         pending_outgoing := some {
           port := smc_sender_to_ke_sender_port
           message := {
             source := some smc_sender_id
             label := .input
-            payload := .ke_plain .init
+            payload := .ke .init
           }
           label_matches := rfl
         } }
-  | .ke_plain (.key shared_key) =>
+  | .ke (.key shared_key) =>
       match st.waiting_message with
       | some (sid', plaintext) =>
           { waiting_message := none
@@ -464,7 +464,7 @@ def smc_sender_receive (st : SMCSenderState)
               message := {
                 source := some smc_sender_id
                 label := .input
-                payload := .forw_plain
+                payload := .forw
                   (.submit smc_sender_id smc_receiver_id
                     (.smc_cipher sid' (enc shared_key plaintext)))
               }
@@ -478,10 +478,10 @@ def smc_sender_receive (st : SMCSenderState)
 def smc_receiver_receive (st : SMCReceiverState)
     (msg : Message SMCEasyUCPayload) : SMCReceiverState :=
   match msg.payload with
-  | .ke_plain (.key shared_key) =>
+  | .ke (.key shared_key) =>
       { session_key := some shared_key
         pending_outgoing := none }
-  | .forw_from_functionality _ (.delivered _ _ (.smc_cipher sid cipher)) =>
+  | .forw (.delivered _ _ (.smc_cipher sid cipher)) =>
       let shared_key := st.session_key.getD default_shared_key
       { st with
         pending_outgoing := some {
@@ -489,7 +489,7 @@ def smc_receiver_receive (st : SMCReceiverState)
           message := {
             source := some smc_receiver_id
             label := .subroutineOutput
-            payload := .smc_plain (.received sid (dec shared_key cipher))
+            payload := .smc (.received sid (dec shared_key cipher))
           }
           label_matches := rfl
         } }
@@ -499,9 +499,9 @@ def smc_receiver_receive (st : SMCReceiverState)
 def ke_sender_receive (st : KESenderState)
     (msg : Message SMCEasyUCPayload) : KESenderState :=
   match msg.payload with
-  | .ke_plain .init =>
+  | .ke .init =>
       { st with pending_action := some .send_first }
-  | .forw_from_functionality _ (.delivered _ _ (.ke_second share)) =>
+  | .forw (.delivered _ _ (.ke_second share)) =>
       { st with pending_action := some (.output_key share) }
   | _ =>
       st
@@ -509,7 +509,7 @@ def ke_sender_receive (st : KESenderState)
 def ke_receiver_receive (st : KEReceiverState)
     (msg : Message SMCEasyUCPayload) : KEReceiverState :=
   match msg.payload with
-  | .forw_from_functionality _ (.delivered _ _ (.ke_first share)) =>
+  | .forw (.delivered _ _ (.ke_first share)) =>
       { st with pending_action := some share }
   | _ =>
       st
@@ -521,7 +521,7 @@ private def ke_sender_key_envelope
     message := {
       source := some ke_sender_id
       label := .subroutineOutput
-      payload := .ke_plain (.key shared_key)
+      payload := .ke (.key shared_key)
     }
     label_matches := rfl
   }
@@ -533,7 +533,7 @@ private def ke_receiver_key_envelope
     message := {
       source := some ke_receiver_id
       label := .subroutineOutput
-      payload := .ke_plain (.key shared_key)
+      payload := .ke (.key shared_key)
     }
     label_matches := rfl
   }
@@ -556,7 +556,7 @@ noncomputable def ke_sender_resume
             message := {
               source := some ke_sender_id
               label := .input
-              payload := .forw_plain
+              payload := .forw
                 (.submit ke_sender_id ke_receiver_id (.ke_first share))
             }
             label_matches := rfl
@@ -603,7 +603,7 @@ noncomputable def ke_receiver_resume
                 message := {
                   source := some ke_receiver_id
                   label := .input
-                  payload := .forw_plain
+                  payload := .forw
                     (.submit ke_receiver_id ke_sender_id
                       (.ke_second share))
                 }
@@ -615,11 +615,53 @@ noncomputable def smc_sender_program :
     MachineProgram SMCEasyUCPayload Unit where
   LocalState := SMCSenderState
   init := fun _ => { waiting_message := none, pending_outgoing := none }
-  receive := smc_sender_receive
-  resume :=
-    option_resume
-      (fun st => st.pending_outgoing)
-      (fun st => { st with pending_outgoing := none })
+  activate := fun st incoming? =>
+    let st' :=
+      match incoming? with
+      | none => st
+      | some msg =>
+          match msg.payload with
+          | .smc (.send sid plaintext) =>
+              { waiting_message := some (sid, plaintext)
+                pending_outgoing := some {
+                  port := smc_sender_to_ke_sender_port
+                  message := {
+                    source := some smc_sender_id
+                    label := .input
+                    payload := .ke .init
+                  }
+                  label_matches := rfl
+                } }
+          | .ke (.key shared_key) =>
+              match st.waiting_message with
+              | some (sid', plaintext) =>
+                  { waiting_message := none
+                    pending_outgoing := some {
+                      port := smc_sender_to_forw_smc_port
+                      message := {
+                        source := some smc_sender_id
+                        label := .input
+                        payload := .forw
+                          (.submit smc_sender_id smc_receiver_id
+                            (.smc_cipher sid' (enc shared_key plaintext)))
+                      }
+                      label_matches := rfl
+                    } }
+              | none =>
+                  st
+          | _ =>
+              st
+    match st'.pending_outgoing with
+    | none =>
+        PMF.pure {
+          state := st'
+          outgoing? := none
+        }
+    | some env =>
+        PMF.pure {
+          state := { st' with pending_outgoing := none }
+          outgoing? := some env
+        }
   is_halted := fun _ => false
   output := fun _ => ()
 
@@ -627,11 +669,40 @@ noncomputable def smc_receiver_program :
     MachineProgram SMCEasyUCPayload Unit where
   LocalState := SMCReceiverState
   init := fun _ => { session_key := none, pending_outgoing := none }
-  receive := smc_receiver_receive
-  resume :=
-    option_resume
-      (fun st => st.pending_outgoing)
-      (fun st => { st with pending_outgoing := none })
+  activate := fun st incoming? =>
+    let st' :=
+      match incoming? with
+      | none => st
+      | some msg =>
+          match msg.payload with
+          | .ke (.key shared_key) =>
+              { session_key := some shared_key
+                pending_outgoing := none }
+          | .forw (.delivered _ _ (.smc_cipher sid cipher)) =>
+              let shared_key := st.session_key.getD default_shared_key
+              { st with
+                pending_outgoing := some {
+                  port := smc_receiver_to_external_port
+                  message := {
+                    source := some smc_receiver_id
+                    label := .subroutineOutput
+                    payload := .smc (.received sid (dec shared_key cipher))
+                  }
+                  label_matches := rfl
+                } }
+          | _ =>
+              st
+    match st'.pending_outgoing with
+    | none =>
+        PMF.pure {
+          state := st'
+          outgoing? := none
+        }
+    | some env =>
+        PMF.pure {
+          state := { st' with pending_outgoing := none }
+          outgoing? := some env
+        }
   is_halted := fun _ => false
   output := fun _ => ()
 
@@ -639,8 +710,48 @@ noncomputable def ke_sender_program
     (gen : GroupGenerator) : MachineProgram SMCEasyUCPayload Unit where
   LocalState := KESenderState
   init := ke_sender_init
-  receive := ke_sender_receive
-  resume := ke_sender_resume gen
+  activate := fun st incoming? =>
+    let st' :=
+      match incoming? with
+      | none => st
+      | some msg =>
+          match msg.payload with
+          | .ke .init =>
+              { st with pending_action := some .send_first }
+          | .forw (.delivered _ _ (.ke_second share)) =>
+              { st with pending_action := some (.output_key share) }
+          | _ =>
+              st
+    match st'.pending_action with
+    | none =>
+        PMF.pure {
+          state := st'
+          outgoing? := none
+        }
+    | some .send_first =>
+        sample_public_group_element gen st'.sec_param |>.bind fun share =>
+          PMF.pure {
+            state := { st' with local_share := some share, pending_action := none }
+            outgoing? := some {
+              port := ke_sender_to_forw_ke_forward_port
+              message := {
+                source := some ke_sender_id
+                label := .input
+                payload := .forw
+                  (.submit ke_sender_id ke_receiver_id (.ke_first share))
+              }
+              label_matches := rfl
+            }
+          }
+    | some (.output_key peer_share) =>
+        let shared_key :=
+          match st'.local_share with
+          | some share => derive_shared_key share peer_share
+          | none => default_shared_key
+        PMF.pure {
+          state := { st' with local_share := none, pending_action := none }
+          outgoing? := some (ke_sender_key_envelope shared_key)
+        }
   is_halted := fun _ => false
   output := fun _ => ()
 
@@ -648,8 +759,50 @@ noncomputable def ke_receiver_program
     (gen : GroupGenerator) : MachineProgram SMCEasyUCPayload Unit where
   LocalState := KEReceiverState
   init := ke_receiver_init
-  receive := ke_receiver_receive
-  resume := ke_receiver_resume gen
+  activate := fun st incoming? =>
+    let st' :=
+      match incoming? with
+      | none => st
+      | some msg =>
+          match msg.payload with
+          | .forw (.delivered _ _ (.ke_first share)) =>
+              { st with pending_action := some share }
+          | _ =>
+              st
+    match st'.pending_outgoing with
+    | some env =>
+        PMF.pure {
+          state := { st' with pending_outgoing := none }
+          outgoing? := some env
+        }
+    | none =>
+        match st'.pending_action with
+        | none =>
+            PMF.pure {
+              state := st'
+              outgoing? := none
+            }
+        | some peer_share =>
+            sample_public_group_element gen st'.sec_param |>.bind fun share =>
+              let shared_key := derive_shared_key peer_share share
+              PMF.pure {
+                state := {
+                  st' with
+                    pending_action := none
+                    pending_outgoing := some (ke_receiver_key_envelope shared_key)
+                }
+                outgoing? := some {
+                  port := ke_receiver_to_forw_ke_return_port
+                  message := {
+                    source := some ke_receiver_id
+                    label := .input
+                    payload := .forw
+                      (.submit ke_receiver_id ke_sender_id
+                        (.ke_second share))
+                  }
+                  label_matches := rfl
+                }
+              }
   is_halted := fun _ => false
   output := fun _ => ()
 

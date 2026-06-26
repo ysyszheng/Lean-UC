@@ -61,7 +61,7 @@ private def release_init_envelope : Envelope SMCEasyUCPayload :=
     message := {
       source := some adv_id
       label := .backdoor
-      payload := .ke_plain .release_init
+      payload := .ke .release_init
     }
     label_matches := rfl
   }
@@ -71,22 +71,21 @@ private def release_confirm_envelope : Envelope SMCEasyUCPayload :=
     message := {
       source := some adv_id
       label := .backdoor
-      payload := .ke_plain .release_confirm
+      payload := .ke .release_confirm
     }
     label_matches := rfl
   }
 
 private def adversary_requested_release (payload : SMCEasyUCPayload) : Bool :=
   match payload with
-  | .forw_plain .release => true
-  | .forw_to_functionality _ .release => true
+  | .forw .release => true
   | _ => false
 
 private def first_observe_message
     (share : GroupElement) : Message SMCEasyUCPayload := {
   source := some forw_ke_forward_id
   label := .backdoor
-  payload := .forw_plain
+  payload := .forw
     (.observe ke_sender_id ke_receiver_id (.ke_first share))
 }
 
@@ -94,7 +93,7 @@ private def second_observe_message
     (share : GroupElement) : Message SMCEasyUCPayload := {
   source := some forw_ke_return_id
   label := .backdoor
-  payload := .forw_plain
+  payload := .forw
     (.observe ke_receiver_id ke_sender_id (.ke_second share))
 }
 
@@ -154,39 +153,6 @@ private noncomputable def ensure_simulator_view
           (sample_simulator_view gen st.sec_param).bind fun view =>
             PMF.pure (view, { st with sampled_view? := some view })
 
-private noncomputable def deliver_pending_to_adversary
-    (gen : GroupGenerator.{0}) (fixed_view? : Option SimulatorView)
-    (A : Adversary SMCEasyUCPayload)
-    (st : SimulatorState A) :
-    PMF (SimulatorState A) :=
-  match st.pending_input with
-  | none =>
-      PMF.pure st
-  | some .first_observe =>
-      (ensure_simulator_view gen fixed_view? st).bind fun view_and_state =>
-        let view := view_and_state.1
-        let st_view := view_and_state.2
-        let wrapped_state :=
-          A.machine.program.receive st_view.wrapped_state
-            (first_observe_message view.first_share)
-        PMF.pure {
-          st_view with
-            wrapped_state := wrapped_state
-            pending_input := none
-        }
-  | some .second_observe =>
-      (ensure_simulator_view gen fixed_view? st).bind fun view_and_state =>
-        let view := view_and_state.1
-        let st_view := view_and_state.2
-        let wrapped_state :=
-          A.machine.program.receive st_view.wrapped_state
-            (second_observe_message view.second_share)
-        PMF.pure {
-          st_view with
-            wrapped_state := wrapped_state
-            pending_input := none
-        }
-
 noncomputable def simulator_program
     (gen : GroupGenerator.{0}) (fixed_view? : Option SimulatorView)
     (A : Adversary SMCEasyUCPayload) :
@@ -199,34 +165,50 @@ noncomputable def simulator_program
     sampled_view? := fixed_view?
     pending_input := none
   }
-  receive := fun st msg =>
-    match msg.payload with
-    | .ke_plain (.observe_init _ _) =>
-        { st with pending_input := some .first_observe }
-    | .ke_plain .observe_confirm =>
-        { st with pending_input := some .second_observe }
-    | _ =>
-        let wrapped_state := A.machine.program.receive st.wrapped_state msg
-        { st with wrapped_state := wrapped_state }
-  resume := fun st =>
-    (deliver_pending_to_adversary gen fixed_view? A st).bind fun st_delivered =>
-      (A.machine.program.resume st_delivered.wrapped_state).bind fun wrapped_result =>
-        let st' : SimulatorState A := {
-          st_delivered with
-          wrapped_state := wrapped_result.state
-        }
-        match wrapped_result.outgoing? with
-        | none =>
-            PMF.pure {
-              state := st'
-              outgoing? := none
-            }
-        | some env =>
-            let translated := translate_adversary_outgoing st'.stage env
-            PMF.pure {
-              state := { st' with stage := translated.1 }
-              outgoing? := translated.2
-            }
+  activate := fun st incoming? =>
+    let finish (st_base : SimulatorState A)
+        (wrapped_result :
+          ActivationResult SMCEasyUCPayload A.machine.program.LocalState) :
+        PMF (ActivationResult SMCEasyUCPayload (SimulatorState A)) :=
+      let st' : SimulatorState A := {
+        st_base with
+        wrapped_state := wrapped_result.state
+      }
+      match wrapped_result.outgoing? with
+      | none =>
+          PMF.pure {
+            state := st'
+            outgoing? := none
+          }
+      | some env =>
+          let translated := translate_adversary_outgoing st'.stage env
+          PMF.pure {
+            state := { st' with stage := translated.1 }
+            outgoing? := translated.2
+          }
+    match incoming? with
+    | some msg =>
+        match msg.payload with
+        | .ke (.observe_init _ _) =>
+            (ensure_simulator_view gen fixed_view? st).bind fun view_and_state =>
+              let view := view_and_state.1
+              let st_view := view_and_state.2
+              (A.machine.program.activate st_view.wrapped_state
+                (some (first_observe_message view.first_share))).bind fun wrapped_result =>
+                  finish st_view wrapped_result
+        | .ke .observe_confirm =>
+            (ensure_simulator_view gen fixed_view? st).bind fun view_and_state =>
+              let view := view_and_state.1
+              let st_view := view_and_state.2
+              (A.machine.program.activate st_view.wrapped_state
+                (some (second_observe_message view.second_share))).bind fun wrapped_result =>
+                  finish st_view wrapped_result
+        | _ =>
+            (A.machine.program.activate st.wrapped_state (some msg)).bind fun wrapped_result =>
+              finish st wrapped_result
+    | none =>
+        (A.machine.program.activate st.wrapped_state none).bind fun wrapped_result =>
+          finish st wrapped_result
   is_halted := fun _ => false
   output := fun _ => ()
 
@@ -253,7 +235,7 @@ noncomputable def simulator_machine
 固定的 DHKE simulator 构造。
 
 它不是直接复用 adversary：新的 machine 只有 simulator 的通信接口；
-程序内部黑盒调用 `A.machine.program.receive/resume`，并把两条 `Forw.release`
+程序内部黑盒调用 `A.machine.program.activate`，并把两条 `Forw.release`
 按阶段翻译为 `IdealKE.release_init` 与 `IdealKE.release_confirm`。
 -/
 noncomputable def simulator
@@ -736,12 +718,12 @@ def challenge_initiator_receive
     (msg : Message SMCEasyUCPayload) :
     ChallengeInitiatorState :=
   match st.phase, msg.label, msg.payload with
-  | .waiting_init, .input, .ke_plain .init =>
+  | .waiting_init, .input, .ke .init =>
       { st with
         phase := .waiting_second
         pending_action := some .send_first }
   | .waiting_second, .subroutineOutput,
-      .forw_from_functionality _ (.delivered _ _ (.ke_second _share)) =>
+      .forw (.delivered _ _ (.ke_second _share)) =>
       { st with pending_action := some .output_key }
   | _, _, _ =>
       st
@@ -752,7 +734,7 @@ def challenge_responder_receive
     ChallengeResponderState :=
   match st.phase, msg.label, msg.payload with
   | .waiting_first, .subroutineOutput,
-      .forw_from_functionality _ (.delivered _ _ (.ke_first share)) =>
+      .forw (.delivered _ _ (.ke_first share)) =>
       { st with pending_first_share := some share }
   | _, _, _ =>
       st
@@ -763,7 +745,7 @@ def challenge_initiator_first_envelope
     message := {
       source := some ke_sender_id
       label := .input
-      payload := .forw_plain
+      payload := .forw
         (.submit ke_sender_id ke_receiver_id
           (.ke_first (challenge_first_share sample)))
     }
@@ -776,7 +758,7 @@ def challenge_responder_second_envelope
     message := {
       source := some ke_receiver_id
       label := .input
-      payload := .forw_plain
+      payload := .forw
         (.submit ke_receiver_id ke_sender_id
           (.ke_second (challenge_second_share sample)))
     }
@@ -897,7 +879,7 @@ theorem project_responder_state_of_witness_initial
 def initiator_init_message : Message SMCEasyUCPayload := {
   source := some smc_sender_id
   label := .input
-  payload := .ke_plain .init
+  payload := .ke .init
 }
 
 /-- 第一条 `Forw` 交付给 responder 的合法消息。 -/
@@ -905,9 +887,19 @@ def first_share_delivered_message
     (sample : DDHSample.{0}) : Message SMCEasyUCPayload := {
   source := some forw_ke_forward_id
   label := .subroutineOutput
-  payload := .forw_from_functionality smc_receiver_id
+  instruction := .dummyDestination smc_receiver_id
+  payload := .forw
     (.delivered ke_sender_id ke_receiver_id
       (.ke_first (challenge_first_share sample)))
+  instruction_valid := by
+    refine ⟨?_, ?_, ?_⟩
+    · intro pid h
+      cases h
+    · intro caller_id h
+      cases h
+    · intro dest_id h
+      cases h
+      rfl
 }
 
 /-- 第二条 `Forw` 交付给 initiator 的合法消息。 -/
@@ -915,9 +907,19 @@ def second_share_delivered_message
     (sample : DDHSample.{0}) : Message SMCEasyUCPayload := {
   source := some forw_ke_return_id
   label := .subroutineOutput
-  payload := .forw_from_functionality smc_sender_id
+  instruction := .dummyDestination smc_sender_id
+  payload := .forw
     (.delivered ke_receiver_id ke_sender_id
       (.ke_second (challenge_second_share sample)))
+  instruction_valid := by
+    refine ⟨?_, ?_, ?_⟩
+    · intro pid h
+      cases h
+    · intro caller_id h
+      cases h
+    · intro dest_id h
+      cases h
+      rfl
 }
 
 /-- 真实 initiator 收到合法初始化消息后进入等待发送第一条 share 的状态。 -/
@@ -1346,8 +1348,45 @@ noncomputable def challenge_initiator_program
     MachineProgram SMCEasyUCPayload Unit where
   LocalState := ChallengeInitiatorState
   init := challenge_initiator_init
-  receive := challenge_initiator_receive
-  resume := challenge_initiator_resume sample
+  activate := fun st incoming? =>
+    let st' :=
+      match incoming? with
+      | none => st
+      | some msg =>
+          match st.phase, msg.label, msg.payload with
+          | .waiting_init, .input, .ke .init =>
+              { st with
+                phase := .waiting_second
+                pending_action := some .send_first }
+          | .waiting_second, .subroutineOutput,
+              .forw (.delivered _ _ (.ke_second _share)) =>
+              { st with pending_action := some .output_key }
+          | _, _, _ =>
+              st
+    match st'.pending_action with
+    | none =>
+        PMF.pure {
+          state := st'
+          outgoing? := none
+        }
+    | some .send_first =>
+        PMF.pure {
+          state := {
+            st' with
+              phase := .waiting_second
+              pending_action := none
+          }
+          outgoing? := some (challenge_initiator_first_envelope sample)
+        }
+    | some .output_key =>
+        PMF.pure {
+          state := {
+            st' with
+              phase := .done
+              pending_action := none
+          }
+          outgoing? := some (challenge_initiator_key_envelope sample)
+        }
   is_halted := fun _ => false
   output := fun _ => ()
 
@@ -1356,8 +1395,45 @@ noncomputable def challenge_responder_program
     MachineProgram SMCEasyUCPayload Unit where
   LocalState := ChallengeResponderState
   init := challenge_responder_init
-  receive := challenge_responder_receive
-  resume := challenge_responder_resume sample
+  activate := fun st incoming? =>
+    let st' :=
+      match incoming? with
+      | none => st
+      | some msg =>
+          match st.phase, msg.label, msg.payload with
+          | .waiting_first, .subroutineOutput,
+              .forw (.delivered _ _ (.ke_first share)) =>
+              { st with pending_first_share := some share }
+          | _, _, _ =>
+              st
+    match st'.pending_outgoing with
+    | some env =>
+        PMF.pure {
+          state := {
+            st' with
+              phase := .done
+              pending_outgoing := none
+          }
+          outgoing? := some env
+        }
+    | none =>
+        match st'.pending_first_share with
+        | none =>
+            PMF.pure {
+              state := st'
+              outgoing? := none
+            }
+        | some _share =>
+            PMF.pure {
+              state := {
+                st' with
+                  phase := .sent_second
+                  pending_first_share := none
+                  pending_outgoing :=
+                    some (challenge_responder_key_envelope sample)
+              }
+              outgoing? := some (challenge_responder_second_envelope sample)
+            }
   is_halted := fun _ => false
   output := fun _ => ()
 
@@ -1444,245 +1520,6 @@ noncomputable def project_responder_protocol_state
     (gen : GroupGenerator.{0}) (sample : DDHSample.{0})
     (st : ResponderState) : ProtocolMachineState SMCEasyUCPayload :=
   challenge_responder_protocol_state gen sample (project_responder_state sample st)
-
-/-! ## Runtime protocol-machine projection lemmas -/
-
-/--
-`ProtocolMachineState.receive` 层的 initiator init 投影交换。
-
-controller 投递消息时操作的是 `ProtocolMachineState`，而不是裸的
-`InitiatorState`。该 lemma 把局部 receive 投影提升到 controller runtime state。
--/
-theorem project_initiator_protocol_receive_init_of_witness
-    (gen : GroupGenerator.{0}) (n : ℕ) (witness : DDHRealWitness) :
-    ProtocolMachineState.receive
-      (project_initiator_protocol_state gen witness.to_sample
-        { sec_param := n
-          group? := some witness.G
-          secret? := some witness.initiator_secret
-          phase := .waiting_init
-          pending_action := none })
-      initiator_init_message =
-    project_initiator_protocol_state gen witness.to_sample
-      (initiator_receive
-        { sec_param := n
-          group? := some witness.G
-          secret? := some witness.initiator_secret
-          phase := .waiting_init
-          pending_action := none }
-        initiator_init_message) := by
-  simp [ProtocolMachineState.receive, project_initiator_protocol_state,
-    challenge_initiator_protocol_state, challenge_protocol_ke_sender_machine,
-    challenge_ke_sender_machine, challenge_initiator_program, lift_machine_to_type1,
-    project_initiator_receive_init_of_witness]
-
-/--
-`ProtocolMachineState.receive` 层的 responder first-share 投影交换。
--/
-theorem project_responder_protocol_receive_first_share_of_witness
-    (gen : GroupGenerator.{0}) (n : ℕ) (witness : DDHRealWitness) :
-    ProtocolMachineState.receive
-      (project_responder_protocol_state gen witness.to_sample
-        { sec_param := n
-          group? := some witness.G
-          secret? := some witness.responder_secret
-          phase := .waiting_first
-          pending_peer_share := none
-          pending_outgoing := none })
-      (first_share_delivered_message witness.to_sample) =
-    project_responder_protocol_state gen witness.to_sample
-      (responder_receive
-        { sec_param := n
-          group? := some witness.G
-          secret? := some witness.responder_secret
-          phase := .waiting_first
-          pending_peer_share := none
-          pending_outgoing := none }
-        (first_share_delivered_message witness.to_sample)) := by
-  simp [ProtocolMachineState.receive, project_responder_protocol_state,
-    challenge_responder_protocol_state, challenge_protocol_ke_receiver_machine,
-    challenge_ke_receiver_machine, challenge_responder_program, lift_machine_to_type1,
-    project_responder_receive_first_share_of_witness]
-
-/--
-`ProtocolMachineState.receive` 层的 initiator second-share 投影交换。
--/
-theorem project_initiator_protocol_receive_second_share_of_witness
-    (gen : GroupGenerator.{0}) (n : ℕ) (witness : DDHRealWitness) :
-    ProtocolMachineState.receive
-      (project_initiator_protocol_state gen witness.to_sample
-        { sec_param := n
-          group? := some witness.G
-          secret? := some witness.initiator_secret
-          phase := .waiting_second
-          pending_action := none })
-      (second_share_delivered_message witness.to_sample) =
-    project_initiator_protocol_state gen witness.to_sample
-      (initiator_receive
-        { sec_param := n
-          group? := some witness.G
-          secret? := some witness.initiator_secret
-          phase := .waiting_second
-          pending_action := none }
-        (second_share_delivered_message witness.to_sample)) := by
-  simp [ProtocolMachineState.receive, project_initiator_protocol_state,
-    challenge_initiator_protocol_state, challenge_protocol_ke_sender_machine,
-    challenge_ke_sender_machine, challenge_initiator_program, lift_machine_to_type1,
-    project_initiator_receive_second_share_of_witness]
-
-/--
-`ProtocolMachineState.resume` 层的 initiator 第一条 share 投影交换。
--/
-theorem project_initiator_protocol_resume_send_first_of_witness
-    (gen : GroupGenerator.{0}) (n : ℕ) (witness : DDHRealWitness) :
-    ProtocolMachineState.resume
-      (project_initiator_protocol_state gen witness.to_sample
-        { sec_param := n
-          group? := some witness.G
-          secret? := some witness.initiator_secret
-          phase := .waiting_second
-          pending_action := some .send_first }) =
-    (ProtocolMachineState.resume
-      (real_initiator_protocol_state gen
-        { sec_param := n
-          group? := some witness.G
-          secret? := some witness.initiator_secret
-          phase := .waiting_second
-          pending_action := some .send_first })).bind
-      fun result =>
-        PMF.pure
-          (project_initiator_protocol_state gen witness.to_sample
-            { sec_param := n
-              group? := some witness.G
-              secret? := some witness.initiator_secret
-              phase := .waiting_second
-              pending_action := none },
-            result.2) := by
-  simp [ProtocolMachineState.resume, real_initiator_protocol_state,
-    project_initiator_protocol_state, challenge_initiator_protocol_state,
-    challenge_protocol_ke_sender_machine, challenge_ke_sender_machine,
-    challenge_initiator_program, ke_sender_machine, initiator_program,
-    lift_machine_to_type1, initiator_resume_send_first_of_witness,
-    challenge_initiator_resume, project_initiator_state, project_initiator_phase,
-    project_initiator_action]
-
-/--
-`ProtocolMachineState.resume` 层的 initiator key 输出投影交换。
--/
-theorem project_initiator_protocol_resume_output_key_of_witness
-    (gen : GroupGenerator.{0}) (n : ℕ) (witness : DDHRealWitness) :
-    ProtocolMachineState.resume
-      (project_initiator_protocol_state gen witness.to_sample
-        { sec_param := n
-          group? := some witness.G
-          secret? := some witness.initiator_secret
-          phase := .waiting_second
-          pending_action :=
-            some (.output_key witness.responder_secret.public_share) }) =
-    (ProtocolMachineState.resume
-      (real_initiator_protocol_state gen
-        { sec_param := n
-          group? := some witness.G
-          secret? := some witness.initiator_secret
-          phase := .waiting_second
-          pending_action :=
-            some (.output_key witness.responder_secret.public_share) })).bind
-      fun result =>
-        PMF.pure
-          (project_initiator_protocol_state gen witness.to_sample
-            { sec_param := n
-              group? := some witness.G
-              secret? := none
-              phase := .done
-              pending_action := none },
-            result.2) := by
-  simp [ProtocolMachineState.resume, real_initiator_protocol_state,
-    project_initiator_protocol_state, challenge_initiator_protocol_state,
-    challenge_protocol_ke_sender_machine, challenge_ke_sender_machine,
-    challenge_initiator_program, ke_sender_machine, initiator_program,
-    lift_machine_to_type1, initiator_resume_output_key_of_witness,
-    challenge_initiator_resume, project_initiator_state, project_initiator_phase,
-    project_initiator_action]
-
-/--
-`ProtocolMachineState.resume` 层的 responder 第二条 share 投影交换。
--/
-theorem project_responder_protocol_resume_send_second_of_witness
-    (gen : GroupGenerator.{0}) (n : ℕ) (witness : DDHRealWitness) :
-    ProtocolMachineState.resume
-      (project_responder_protocol_state gen witness.to_sample
-        { sec_param := n
-          group? := some witness.G
-          secret? := some witness.responder_secret
-          phase := .waiting_first
-          pending_peer_share := some witness.initiator_secret.public_share
-          pending_outgoing := none }) =
-    (ProtocolMachineState.resume
-      (real_responder_protocol_state gen
-        { sec_param := n
-          group? := some witness.G
-          secret? := some witness.responder_secret
-          phase := .waiting_first
-          pending_peer_share := some witness.initiator_secret.public_share
-          pending_outgoing := none })).bind
-      fun result =>
-        PMF.pure
-          (project_responder_protocol_state gen witness.to_sample
-            { sec_param := n
-              group? := some witness.G
-              secret? := some witness.responder_secret
-              phase := .sent_second
-              pending_peer_share := none
-              pending_outgoing :=
-                some (challenge_responder_key_envelope witness.to_sample) },
-            result.2) := by
-  simp [ProtocolMachineState.resume, real_responder_protocol_state,
-    project_responder_protocol_state, challenge_responder_protocol_state,
-    challenge_protocol_ke_receiver_machine, challenge_ke_receiver_machine,
-    challenge_responder_program, protocol_ke_receiver_machine, ke_receiver_machine,
-    responder_program, lift_machine_to_type1, responder_resume_send_second_of_witness,
-    challenge_responder_resume, project_responder_state, project_responder_phase,
-    project_responder_pending_first, project_responder_pending_outgoing,
-    challenge_first_share_of_witness]
-
-/--
-`ProtocolMachineState.resume` 层的 responder 暂存 key 输出投影交换。
--/
-theorem project_responder_protocol_resume_pending_key_of_witness
-    (gen : GroupGenerator.{0}) (n : ℕ) (witness : DDHRealWitness) :
-    ProtocolMachineState.resume
-      (project_responder_protocol_state gen witness.to_sample
-        { sec_param := n
-          group? := some witness.G
-          secret? := some witness.responder_secret
-          phase := .sent_second
-          pending_peer_share := none
-          pending_outgoing := some (challenge_responder_key_envelope witness.to_sample) }) =
-    (ProtocolMachineState.resume
-      (real_responder_protocol_state gen
-        { sec_param := n
-          group? := some witness.G
-          secret? := some witness.responder_secret
-          phase := .sent_second
-          pending_peer_share := none
-          pending_outgoing := some (challenge_responder_key_envelope witness.to_sample) })).bind
-      fun result =>
-        PMF.pure
-          (project_responder_protocol_state gen witness.to_sample
-            { sec_param := n
-              group? := some witness.G
-              secret? := some witness.responder_secret
-              phase := .done
-              pending_peer_share := none
-              pending_outgoing := none },
-            result.2) := by
-  simp [ProtocolMachineState.resume, real_responder_protocol_state,
-    project_responder_protocol_state, challenge_responder_protocol_state,
-    challenge_protocol_ke_receiver_machine, challenge_ke_receiver_machine,
-    challenge_responder_program, protocol_ke_receiver_machine, ke_receiver_machine,
-    responder_program, lift_machine_to_type1, responder_resume,
-    challenge_responder_resume, project_responder_state, project_responder_phase,
-    project_responder_pending_first, project_responder_pending_outgoing]
 
 noncomputable def challenge_real_machines
     (gen : GroupGenerator) (sample : DDHSample.{0}) :

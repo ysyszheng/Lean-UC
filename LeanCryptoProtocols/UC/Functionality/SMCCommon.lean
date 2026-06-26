@@ -9,7 +9,7 @@ import LeanCryptoProtocols.UC.IdealWorld
 - SMC 会话标识；
 - 网络消息；
 - `Forw` / `KE` / `SMC` 的业务消息；
-- 在当前 ideal-world builder 下统一使用的 payload 类型。
+- 统一使用的业务 payload 类型。
 -/
 
 namespace LeanCryptoProtocols.UC.Functionality
@@ -113,25 +113,11 @@ inductive SMCBody where
   | received (sid : Sid) (plaintext : Plaintext)
   deriving Repr, DecidableEq
 
-/--
-EasyUC case study 统一使用的 payload。
-
-三个 functionality 都采用与 `IdealOT` 类似的包装方式：
-
-- `plain`：environment / caller 与 dummy party 之间的业务消息；
-- `to_functionality`：dummy party 转发给功能机；
-- `from_functionality`：功能机返回给 dummy party。
--/
+/-- EasyUC case study 中各 functionality 共用的业务 payload。 -/
 inductive SMCEasyUCPayload where
-  | forw_plain (body : ForwBody)
-  | forw_to_functionality (caller_source : Option MachineId) (body : ForwBody)
-  | forw_from_functionality (destination : MachineId) (body : ForwBody)
-  | ke_plain (body : KEBody)
-  | ke_to_functionality (caller_source : Option MachineId) (body : KEBody)
-  | ke_from_functionality (destination : MachineId) (body : KEBody)
-  | smc_plain (body : SMCBody)
-  | smc_to_functionality (caller_source : Option MachineId) (body : SMCBody)
-  | smc_from_functionality (destination : MachineId) (body : SMCBody)
+  | forw (body : ForwBody)
+  | ke (body : KEBody)
+  | smc (body : SMCBody)
   deriving Repr, DecidableEq
 
 end LeanCryptoProtocols.UC.Functionality

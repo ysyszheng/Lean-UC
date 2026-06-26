@@ -92,7 +92,7 @@ def build_observe_envelope (ids : SMCIds) (msg : PendingMessage) :
   message := {
     source := some ids.functionality_id
     label := .backdoor
-    payload := .smc_plain (.observe msg.sid msg.sender_id msg.receiver_id)
+    payload := .smc (.observe msg.sid msg.sender_id msg.receiver_id)
   }
   label_matches := rfl
 }
@@ -103,8 +103,17 @@ def build_deliver_envelope (ids : SMCIds) (msg : PendingMessage) :
   message := {
     source := some ids.functionality_id
     label := .subroutineOutput
-    payload := .smc_from_functionality ids.receiver_external_id
-      (.received msg.sid msg.plaintext)
+    instruction := .dummyDestination ids.receiver_external_id
+    payload := .smc (.received msg.sid msg.plaintext)
+    instruction_valid := by
+      refine ⟨?_, ?_, ?_⟩
+      · intro pid h
+        cases h
+      · intro caller_id h
+        cases h
+      · intro dest_id h
+        cases h
+        rfl
   }
   label_matches := rfl
 }
@@ -127,105 +136,45 @@ def receive_release (ids : SMCIds) (st : State)
   else
     st
 
-def receive (ids : SMCIds) (st : State) (msg : Message SMCEasyUCPayload) :
-    State :=
-  match st.phase, msg.source, msg.label, msg.payload with
-  | .sstate1, some src, .input, .smc_plain (.send sid plaintext) =>
-      if _h_src : src = ids.sender_id then
-        receive_send ids sid plaintext
-      else
-        st
-  | .sstate1, _, .input, .smc_to_functionality caller_source (.send sid plaintext) =>
-      if _h_src : caller_source = some ids.sender_external_id then
-        receive_send ids sid plaintext
-      else
-        st
-  | .sstate2 pending_msg, some src, .backdoor, .smc_plain (.release sid) =>
-      if _h_src : src = adv_id then
-        receive_release ids st pending_msg sid
-      else
-        st
-  | _, _, _, _ =>
-      st
-
-noncomputable def resume (st : State) : PMF (ActivationResult SMCEasyUCPayload State) :=
-  match st.pending_outgoing with
+noncomputable def activate (ids : SMCIds) (st : State)
+    (incoming? : Option (Message SMCEasyUCPayload)) :
+    PMF (ActivationResult SMCEasyUCPayload State) :=
+  let st' :=
+    match incoming? with
+    | none => st
+    | some msg =>
+        match st.phase, msg.source, msg.label, msg.instruction, msg.payload with
+        | .sstate1, some src, .input, .plain, .smc (.send sid plaintext) =>
+            if _h_src : src = ids.sender_id then
+              receive_send ids sid plaintext
+            else
+              st
+        | .sstate1, _, .input, .dummyCaller caller_id, .smc (.send sid plaintext) =>
+            if _h_src : caller_id = ids.sender_external_id then
+              receive_send ids sid plaintext
+            else
+              st
+        | .sstate2 pending_msg, some src, .backdoor, .plain, .smc (.release sid) =>
+            if _h_src : src = adv_id then
+              receive_release ids st pending_msg sid
+            else
+              st
+        | _, _, _, _, _ =>
+            st
+  match st'.pending_outgoing with
   | none =>
       PMF.pure {
-        state := st
+        state := st'
         outgoing? := none
       }
   | some envelope =>
       PMF.pure {
-        state := { st with pending_outgoing := none }
+        state := { st' with pending_outgoing := none }
         outgoing? := some envelope
       }
 
 def communication_set (ids : SMCIds) : Finset CommPort :=
   { smc_sender_port ids, smc_receiver_port ids, smc_adversary_port ids }
-
-theorem receive_send_sets_pending
-    (ids : SMCIds)
-    (sid : Sid)
-    (plaintext : Plaintext) :
-    receive ids init_state
-      { source := some ids.sender_id
-        label := .input
-        payload := .smc_plain (.send sid plaintext) } =
-      receive_send ids sid plaintext := by
-  simp [receive, init_state]
-
-theorem receive_to_functionality_sets_pending
-    (ids : SMCIds)
-    (sid : Sid)
-    (plaintext : Plaintext) :
-    receive ids init_state
-      { source := some ids.sender_id
-        label := .input
-        payload := .smc_to_functionality (some ids.sender_external_id)
-          (.send sid plaintext) } =
-      receive_send ids sid plaintext := by
-  simp [receive, init_state]
-
-theorem resume_init_state_none :
-    resume init_state =
-      PMF.pure {
-        state := init_state
-        outgoing? := none
-      } := by
-  simp [resume, init_state]
-
-theorem resume_pending_some
-    (ids : SMCIds)
-    (sid : Sid)
-    (plaintext : Plaintext) :
-    resume
-      { phase := .sstate3
-        pending_outgoing := some {
-          port := smc_receiver_port ids
-          message := {
-            source := some ids.functionality_id
-            label := .subroutineOutput
-            payload := .smc_from_functionality ids.receiver_external_id (.received sid plaintext)
-          }
-          label_matches := rfl
-        } } =
-      PMF.pure {
-        state := {
-          phase := .sstate3
-          pending_outgoing := none
-        }
-        outgoing? := some {
-          port := smc_receiver_port ids
-          message := {
-            source := some ids.functionality_id
-            label := .subroutineOutput
-            payload := .smc_from_functionality ids.receiver_external_id (.received sid plaintext)
-          }
-          label_matches := rfl
-        }
-      } := by
-  simp [resume]
 
 noncomputable def machine (ids : SMCIds) : Machine SMCEasyUCPayload Unit where
   id := ids.functionality_id
@@ -233,8 +182,7 @@ noncomputable def machine (ids : SMCIds) : Machine SMCEasyUCPayload Unit where
   program := {
     LocalState := State
     init := fun _ => init_state
-    receive := receive ids
-    resume := resume
+    activate := activate ids
     is_halted := fun _ => false
     output := fun _ => ()
   }
@@ -329,19 +277,6 @@ noncomputable def IdealSMC : SMCIds → IdealFunctionality SMCEasyUCPayload
           exact ⟨ids.receiver_external_separated.2.2.1,
             ids.receiver_external_separated.2.2.2.1,
             ids.receiver_external_separated.2.2.2.2⟩
-      dummy_local_state := Option (Message SMCEasyUCPayload)
-      dummy_init := fun _ => none
-      dummy_receive := fun _ msg => some msg
-      dummy_pending := fun st => st
-      dummy_clear := fun _ => none
-      wrap_input := fun caller_source payload =>
-        match payload with
-        | .smc_plain body => .smc_to_functionality caller_source body
-        | other => other
-      unwrap_output := fun payload =>
-        match payload with
-        | .smc_from_functionality dest body => some (dest, .smc_plain body)
-        | _ => none
       functionality_ports_to_parties := by
         intro pid h_pid
         have h_cases : pid = ids.sender_id ∨ pid = ids.receiver_id := by

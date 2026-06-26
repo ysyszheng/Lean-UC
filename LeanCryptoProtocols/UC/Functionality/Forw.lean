@@ -96,7 +96,7 @@ def build_observe_envelope (ids : ForwIds) (msg : PendingMessage) :
   message := {
     source := some ids.functionality_id
     label := .backdoor
-    payload := .forw_plain (.observe msg.sender_id msg.receiver_id msg.payload)
+    payload := .forw (.observe msg.sender_id msg.receiver_id msg.payload)
   }
   label_matches := rfl
 }
@@ -107,8 +107,17 @@ def build_deliver_envelope (ids : ForwIds) (msg : PendingMessage) :
   message := {
     source := some ids.functionality_id
     label := .subroutineOutput
-    payload := .forw_from_functionality ids.receiver_external_id
-      (.delivered msg.sender_id msg.receiver_id msg.payload)
+    instruction := .dummyDestination ids.receiver_external_id
+    payload := .forw (.delivered msg.sender_id msg.receiver_id msg.payload)
+    instruction_valid := by
+      refine ⟨?_, ?_, ?_⟩
+      · intro pid h
+        cases h
+      · intro caller_id h
+        cases h
+      · intro dest_id h
+        cases h
+        rfl
   }
   label_matches := rfl
 }
@@ -128,38 +137,41 @@ def receive_release (ids : ForwIds) (_st : State)
   { phase := .fstate3
     pending_outgoing := some (build_deliver_envelope ids pending_msg) }
 
-def receive (ids : ForwIds) (st : State) (msg : Message SMCEasyUCPayload) :
-    State :=
-  match st.phase, msg.source, msg.label, msg.payload with
-  | .fstate1, some src, .input, .forw_plain (.submit sender_id receiver_id payload) =>
-      if _h_src : src = sender_id then
-        receive_submit ids sender_id receiver_id payload
-      else
-        st
-  | .fstate1, _, .input, .forw_to_functionality caller_source
-      (.submit sender_id receiver_id payload) =>
-      if _h_src : caller_source = some sender_id then
-        receive_submit ids sender_id receiver_id payload
-      else
-        st
-  | .fstate2 pending_msg, some src, .backdoor, .forw_plain .release =>
-      if _h_src : src = adv_id then
-        receive_release ids st pending_msg
-      else
-        st
-  | _, _, _, _ =>
-      st
-
-noncomputable def resume (st : State) : PMF (ActivationResult SMCEasyUCPayload State) :=
-  match st.pending_outgoing with
+noncomputable def activate (ids : ForwIds) (st : State)
+    (incoming? : Option (Message SMCEasyUCPayload)) :
+    PMF (ActivationResult SMCEasyUCPayload State) :=
+  let st' :=
+    match incoming? with
+    | none => st
+    | some msg =>
+        match st.phase, msg.source, msg.label, msg.instruction, msg.payload with
+        | .fstate1, some src, .input, .plain, .forw (.submit sender_id receiver_id payload) =>
+            if _h_src : src = sender_id then
+              receive_submit ids sender_id receiver_id payload
+            else
+              st
+        | .fstate1, _, .input, .dummyCaller caller_id,
+            .forw (.submit sender_id receiver_id payload) =>
+            if _h_src : caller_id = ids.sender_external_id then
+              receive_submit ids sender_id receiver_id payload
+            else
+              st
+        | .fstate2 pending_msg, some src, .backdoor, .plain, .forw .release =>
+            if _h_src : src = adv_id then
+              receive_release ids st pending_msg
+            else
+              st
+        | _, _, _, _, _ =>
+            st
+  match st'.pending_outgoing with
   | none =>
       PMF.pure {
-        state := st
+        state := st'
         outgoing? := none
       }
   | some envelope =>
       PMF.pure {
-        state := { st with pending_outgoing := none }
+        state := { st' with pending_outgoing := none }
         outgoing? := some envelope
       }
 
@@ -172,8 +184,7 @@ noncomputable def machine (ids : ForwIds) : Machine SMCEasyUCPayload Unit where
   program := {
     LocalState := State
     init := fun _ => init_state
-    receive := receive ids
-    resume := resume
+    activate := activate ids
     is_halted := fun _ => false
     output := fun _ => ()
   }
@@ -268,19 +279,6 @@ noncomputable def IdealForw : ForwIds → IdealFunctionality SMCEasyUCPayload
           exact ⟨ids.receiver_external_separated.2.2.1,
             ids.receiver_external_separated.2.2.2.1,
             ids.receiver_external_separated.2.2.2.2⟩
-      dummy_local_state := Option (Message SMCEasyUCPayload)
-      dummy_init := fun _ => none
-      dummy_receive := fun _ msg => some msg
-      dummy_pending := fun st => st
-      dummy_clear := fun _ => none
-      wrap_input := fun caller_source payload =>
-        match payload with
-        | .forw_plain body => .forw_to_functionality caller_source body
-        | other => other
-      unwrap_output := fun payload =>
-        match payload with
-        | .forw_from_functionality dest body => some (dest, .forw_plain body)
-        | _ => none
       functionality_ports_to_parties := by
         intro pid h_pid
         have h_cases : pid = ids.sender_id ∨ pid = ids.receiver_id := by
