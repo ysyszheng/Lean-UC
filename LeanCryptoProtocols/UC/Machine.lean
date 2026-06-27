@@ -8,7 +8,7 @@ import Mathlib
 - machine identity；
 - communication set；
 - machine program；
-- protocol shape；
+- protocol 的静态结构；
 - caller / subroutine / subsidiary 关系。
 
 这里先只刻画“协议长什么样”，而不在本文件里定义 UC 安全或组合定理。
@@ -54,7 +54,14 @@ structure CommPort where
 
 /-- 机器发送的消息内容。 -/
 structure Message (Payload : Type u) where
-  source : Option MachineId
+  /--
+  Controller 认证后的发送方 identity。
+
+  machine 构造 outgoing message 时通常保持默认值 `none`；controller 在投递前会
+  按当前激活 machine 覆盖该字段。唯一例外是 environment 调用 main machine 时，
+  environment 需要在这里提供对应的 external identity。
+  -/
+  source : Option MachineId := none
   label : PortLabel
   instruction : MessageInstruction := .plain
   payload : Payload
@@ -94,7 +101,7 @@ structure Envelope (Payload : Type u) where
   label_matches : port.label = message.label
   deriving Repr, DecidableEq
 
-/-- 一次原子恢复执行后的结果：更新状态，并至多发送一条消息。 -/
+/-- 一次原子 activation 的结果：更新状态，并至多发送一条消息。 -/
 structure ActivationResult (Payload : Type u) (State : Type v) where
   state : State
   outgoing? : Option (Envelope Payload)
@@ -136,11 +143,6 @@ abbrev AnyMachineState (Payload : Type u) :=
 /-- 从异质 machine 中抽取 identity。 -/
 def AnyMachine.id {Payload : Type u} (m : AnyMachine Payload) : MachineId :=
   m.2.id
-
-/-- 从异质 machine state 中抽取 identity。 -/
-def AnyMachineState.id {Payload : Type u} (st : AnyMachineState Payload) :
-    MachineId :=
-  st.1.id
 
 /-- 抽取 protocol 中所有 machine identity。 -/
 def machine_ids {Payload : Type u} (machines : List (AnyMachine Payload)) : List MachineId :=
@@ -209,7 +211,7 @@ def is_subroutine_of_id {Payload : Type u} {Out : Type v}
 
 /--
 protocol 的静态外形。
-本项目在这一层只记录 Section 2 里对 protocol shape 必需的静态约束；
+本项目在这一层只记录 Section 2 里对 protocol 静态结构必需的约束；
 真正的执行分布在 `Security.lean` 中经由 controller 给出。
 -/
 structure Protocol (Payload : Type u) where
@@ -230,9 +232,6 @@ structure Protocol (Payload : Type u) where
   adv_separated : adv_id ∉ machine_ids machines
   no_direct_environment_communication :
     ∀ m ∈ machines, ∀ p ∈ m.2.communication_set, p.dest ≠ env_id
-  adversary_communication_is_backdoor :
-    ∀ m ∈ machines, ∀ p ∈ m.2.communication_set,
-      p.dest = adv_id → p.label = .backdoor
 
 /-- protocol 中是否存在某个给定 identity 的 machine。 -/
 def Protocol.has_machine_id {Payload : Type u}

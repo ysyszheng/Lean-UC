@@ -54,8 +54,6 @@ def real_protocol_audit_view : ProtocolAuditView where
     , forw_ke_return_id
     , forw_smc_id
     ]
-  adversary_visible_ids :=
-    [forw_ke_forward_id, forw_ke_return_id, forw_smc_id]
   machines :=
     [ machine_view smc_sender_id "main"
         [sender_external_id]

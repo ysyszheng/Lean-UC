@@ -90,7 +90,6 @@ def build_observe_envelope (ids : SMCIds) (msg : PendingMessage) :
     Envelope SMCEasyUCPayload := {
   port := smc_adversary_port ids
   message := {
-    source := some ids.functionality_id
     label := .backdoor
     payload := .smc (.observe msg.sid msg.sender_id msg.receiver_id)
   }
@@ -101,7 +100,6 @@ def build_deliver_envelope (ids : SMCIds) (msg : PendingMessage) :
     Envelope SMCEasyUCPayload := {
   port := smc_receiver_port ids
   message := {
-    source := some ids.functionality_id
     label := .subroutineOutput
     instruction := .dummyDestination ids.receiver_external_id
     payload := .smc (.received msg.sid msg.plaintext)

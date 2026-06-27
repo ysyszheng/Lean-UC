@@ -64,8 +64,6 @@ structure DummyParty (Payload : Type u) where
   external_ids : Finset MachineId
   machine : Machine Payload Unit
   id_matches : machine.id = party_id
-  no_backdoor :
-    ∀ p ∈ machine.communication_set, p.label = .backdoor → False
   input_port_present :
     ∃ p ∈ machine.communication_set, p.dest = functionality_id ∧ p.label = .input
   external_ports_complete :
@@ -228,7 +226,6 @@ noncomputable def program {Payload : Type u} (f : IdealFunctionality Payload)
             match msg.source, msg.instruction with
             | some caller_id, .plain =>
                 let out_msg : Message Payload := {
-                  source := some party_id
                   label := .input
                   instruction := .dummyCaller caller_id
                   payload := msg.payload
@@ -266,7 +263,6 @@ noncomputable def program {Payload : Type u} (f : IdealFunctionality Payload)
                     }
                 | some port =>
                     let out_msg : Message Payload := {
-                      source := some party_id
                       label := .subroutineOutput
                       instruction := .plain
                       payload := msg.payload
@@ -347,14 +343,6 @@ noncomputable def mk_dummy_party {Payload : Type u}
   external_ids := f.party_external_ids party_id
   machine := DummyPartyImpl.machine f party_id h_party
   id_matches := rfl
-  no_backdoor := by
-    classical
-    intro p hp h_backdoor
-    rcases Finset.mem_insert.mp hp with hp | hp
-    · subst hp
-      cases h_backdoor
-    · rcases Finset.mem_image.mp hp with ⟨ext, _, rfl⟩
-      cases h_backdoor
   input_port_present := by
     refine ⟨DummyPartyImpl.input_port f party_id h_party, ?_, rfl, rfl⟩
     exact Finset.mem_insert_self _ _
@@ -467,7 +455,7 @@ structure IdealProtocol (Payload : Type u) where
 /--
 从理想功能自动生成 ideal protocol。
 
-这里把 proof-heavy 的 protocol-shape 组装集中放在一个构造器里，供 `UCRealizesAt`
+这里把 proof-heavy 的 protocol 组装集中放在一个构造器里，供 `UCRealizesAt`
 复用。
 -/
 noncomputable def mk_ideal_protocol {Payload : Type u}
@@ -613,29 +601,6 @@ noncomputable def mk_ideal_protocol {Payload : Type u}
           exact f.parties_separated.1 (by simpa [h_eq] using h_party.1)
         · intro h_eq
           simp [h_adv.1, env_id, adv_id] at h_eq
-    adversary_communication_is_backdoor := by
-      intro m hm p hp h_dest
-      have hm_cases := List.mem_append.mp hm
-      rcases hm_cases with h_dummy | h_fun
-      · rcases List.mem_map.mp h_dummy with ⟨d, hd, rfl⟩
-        have h_data := mk_dummy_parties_mem_party_data f hd
-        rcases h_data with ⟨h_party, h_func, h_exts⟩
-        have h_comm := d.communication_constraints p hp
-        rcases h_comm with h_in | h_out
-        · rw [h_func] at h_in
-          have : f.functionality_id ≠ adv_id := f.functionality_separated.2
-          exact (this (by simpa [h_in.1] using h_dest)).elim
-        · rw [h_exts] at h_out
-          have h_sep := f.external_ids_separated d.party_id h_party p.dest h_out.1
-          exact (h_sep.2.2 h_dest).elim
-      · rcases List.mem_singleton.mp h_fun with rfl
-        have h_comm := f.functionality_comm_constraints p hp
-        rcases h_comm with h_party | h_adv
-        · have : False := by
-            have h_not_adv := f.parties_separated.2
-            exact h_not_adv (by simpa [h_dest] using h_party.1)
-          exact this.elim
-        · simpa [h_adv.1] using h_adv.2
   }
   exact {
     protocol := protocol

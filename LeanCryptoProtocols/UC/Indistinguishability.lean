@@ -146,7 +146,4 @@ infix:50 " ≈ₛ " => StatisticalIndist
 /-- 计算不可区分的数学记号。 -/
 infix:50 " ≈_c " => ComputationalIndist
 
-/-- 默认零函数。 -/
-def zeroBound : ℕ → ℝ := 0
-
 end LeanCryptoProtocols.UC

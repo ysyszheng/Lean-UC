@@ -273,7 +273,6 @@ def initiator_key_envelope
     Envelope SMCEasyUCPayload :=
   { port := ke_sender_to_smc_sender_port
     message := {
-      source := some ke_sender_id
       label := .subroutineOutput
       payload := .ke (.key shared_key)
     }
@@ -285,7 +284,6 @@ def responder_key_envelope
     Envelope SMCEasyUCPayload :=
   { port := ke_receiver_to_smc_receiver_port
     message := {
-      source := some ke_receiver_id
       label := .subroutineOutput
       payload := .ke (.key shared_key)
     }
@@ -343,7 +341,6 @@ noncomputable def initiator_resume
           outgoing? := some {
             port := ke_sender_to_forw_ke_forward_port
             message := {
-              source := some ke_sender_id
               label := .input
               payload := .forw
                 (.submit ke_sender_id ke_receiver_id (.ke_first secret.public_share))
@@ -402,7 +399,6 @@ noncomputable def responder_resume
               outgoing? := some {
                 port := ke_receiver_to_forw_ke_return_port
                 message := {
-                  source := some ke_receiver_id
                   label := .input
                   payload := .forw
                     (.submit ke_receiver_id ke_sender_id
@@ -454,7 +450,6 @@ noncomputable def initiator_program
             outgoing? := some {
               port := ke_sender_to_forw_ke_forward_port
               message := {
-                source := some ke_sender_id
                 label := .input
                 payload := .forw
                   (.submit ke_sender_id ke_receiver_id (.ke_first secret.public_share))
@@ -526,7 +521,6 @@ noncomputable def responder_program
                 outgoing? := some {
                   port := ke_receiver_to_forw_ke_return_port
                   message := {
-                    source := some ke_receiver_id
                     label := .input
                     payload := .forw
                       (.submit ke_receiver_id ke_sender_id

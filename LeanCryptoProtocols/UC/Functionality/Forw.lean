@@ -94,7 +94,6 @@ def build_observe_envelope (ids : ForwIds) (msg : PendingMessage) :
     Envelope SMCEasyUCPayload := {
   port := forw_adversary_port ids
   message := {
-    source := some ids.functionality_id
     label := .backdoor
     payload := .forw (.observe msg.sender_id msg.receiver_id msg.payload)
   }
@@ -105,7 +104,6 @@ def build_deliver_envelope (ids : ForwIds) (msg : PendingMessage) :
     Envelope SMCEasyUCPayload := {
   port := forw_receiver_port ids
   message := {
-    source := some ids.functionality_id
     label := .subroutineOutput
     instruction := .dummyDestination ids.receiver_external_id
     payload := .forw (.delivered msg.sender_id msg.receiver_id msg.payload)

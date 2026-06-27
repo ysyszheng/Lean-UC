@@ -449,7 +449,6 @@ def smc_sender_receive (st : SMCSenderState)
         pending_outgoing := some {
           port := smc_sender_to_ke_sender_port
           message := {
-            source := some smc_sender_id
             label := .input
             payload := .ke .init
           }
@@ -462,7 +461,6 @@ def smc_sender_receive (st : SMCSenderState)
             pending_outgoing := some {
               port := smc_sender_to_forw_smc_port
               message := {
-                source := some smc_sender_id
                 label := .input
                 payload := .forw
                   (.submit smc_sender_id smc_receiver_id
@@ -487,7 +485,6 @@ def smc_receiver_receive (st : SMCReceiverState)
         pending_outgoing := some {
           port := smc_receiver_to_external_port
           message := {
-            source := some smc_receiver_id
             label := .subroutineOutput
             payload := .smc (.received sid (dec shared_key cipher))
           }
@@ -519,7 +516,6 @@ private def ke_sender_key_envelope
     Envelope SMCEasyUCPayload :=
   { port := ke_sender_to_smc_sender_port
     message := {
-      source := some ke_sender_id
       label := .subroutineOutput
       payload := .ke (.key shared_key)
     }
@@ -531,7 +527,6 @@ private def ke_receiver_key_envelope
     Envelope SMCEasyUCPayload :=
   { port := ke_receiver_to_smc_receiver_port
     message := {
-      source := some ke_receiver_id
       label := .subroutineOutput
       payload := .ke (.key shared_key)
     }
@@ -554,7 +549,6 @@ noncomputable def ke_sender_resume
           outgoing? := some {
             port := ke_sender_to_forw_ke_forward_port
             message := {
-              source := some ke_sender_id
               label := .input
               payload := .forw
                 (.submit ke_sender_id ke_receiver_id (.ke_first share))
@@ -601,7 +595,6 @@ noncomputable def ke_receiver_resume
               outgoing? := some {
                 port := ke_receiver_to_forw_ke_return_port
                 message := {
-                  source := some ke_receiver_id
                   label := .input
                   payload := .forw
                     (.submit ke_receiver_id ke_sender_id
@@ -626,7 +619,6 @@ noncomputable def smc_sender_program :
                 pending_outgoing := some {
                   port := smc_sender_to_ke_sender_port
                   message := {
-                    source := some smc_sender_id
                     label := .input
                     payload := .ke .init
                   }
@@ -639,7 +631,6 @@ noncomputable def smc_sender_program :
                     pending_outgoing := some {
                       port := smc_sender_to_forw_smc_port
                       message := {
-                        source := some smc_sender_id
                         label := .input
                         payload := .forw
                           (.submit smc_sender_id smc_receiver_id
@@ -684,7 +675,6 @@ noncomputable def smc_receiver_program :
                 pending_outgoing := some {
                   port := smc_receiver_to_external_port
                   message := {
-                    source := some smc_receiver_id
                     label := .subroutineOutput
                     payload := .smc (.received sid (dec shared_key cipher))
                   }
@@ -735,7 +725,6 @@ noncomputable def ke_sender_program
             outgoing? := some {
               port := ke_sender_to_forw_ke_forward_port
               message := {
-                source := some ke_sender_id
                 label := .input
                 payload := .forw
                   (.submit ke_sender_id ke_receiver_id (.ke_first share))
@@ -794,7 +783,6 @@ noncomputable def ke_receiver_program
                 outgoing? := some {
                   port := ke_receiver_to_forw_ke_return_port
                   message := {
-                    source := some ke_receiver_id
                     label := .input
                     payload := .forw
                       (.submit ke_receiver_id ke_sender_id

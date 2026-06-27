@@ -529,116 +529,6 @@ theorem real_smc_no_direct_environment_communication
     simp [Functionality.ForwImpl.communication_set] at hp
     rcases hp with rfl | rfl | rfl <;> decide
 
-theorem real_smc_adversary_communication_is_backdoor
-    (gen : GroupGenerator) :
-    ∀ m ∈ real_smc_machines gen, ∀ p ∈ m.2.communication_set,
-      p.dest = adv_id → p.label = .backdoor := by
-  intro m hm p hp h_dest
-  simp [real_smc_machines] at hm
-  rcases hm with rfl | rfl | rfl | rfl | rfl | rfl | rfl
-  · simp [smc_sender_machine, smc_sender_to_ke_sender_port,
-      smc_sender_to_forw_smc_port, smc_sender_to_external_port] at hp
-    rcases hp with rfl | rfl | rfl
-    · exfalso
-      have h_bad : ke_sender_id = adv_id := by
-        simpa [smc_sender_to_ke_sender_port, mk_input_port] using h_dest
-      exact ke_sender_separated.2 h_bad
-    · exfalso
-      have h_bad : forw_smc_id = adv_id := by
-        simpa [smc_sender_to_forw_smc_port, mk_input_port] using h_dest
-      exact forw_smc_separated.2 h_bad
-    · exfalso
-      have h_bad : sender_external_id = adv_id := by
-        simpa [smc_sender_to_external_port, mk_subroutine_output_port] using h_dest
-      exact sender_external_separated.2 h_bad
-  · simp [smc_receiver_machine, smc_receiver_to_ke_receiver_port,
-      smc_receiver_to_forw_smc_port, smc_receiver_to_external_port] at hp
-    rcases hp with rfl | rfl | rfl
-    · exfalso
-      have h_bad : ke_receiver_id = adv_id := by
-        simpa [smc_receiver_to_ke_receiver_port, mk_input_port] using h_dest
-      exact ke_receiver_separated.2 h_bad
-    · exfalso
-      have h_bad : forw_smc_id = adv_id := by
-        simpa [smc_receiver_to_forw_smc_port, mk_input_port] using h_dest
-      exact forw_smc_separated.2 h_bad
-    · exfalso
-      have h_bad : receiver_external_id = adv_id := by
-        simpa [smc_receiver_to_external_port, mk_subroutine_output_port] using h_dest
-      exact receiver_external_separated.2 h_bad
-  · simp [ke_sender_machine, ke_sender_to_smc_sender_port,
-      ke_sender_to_forw_ke_forward_port, ke_sender_to_forw_ke_return_port] at hp
-    rcases hp with rfl | rfl | rfl
-    · exfalso
-      have h_bad : smc_sender_id = adv_id := by
-        simpa [ke_sender_to_smc_sender_port, mk_subroutine_output_port] using h_dest
-      exact smc_sender_separated.2 h_bad
-    · exfalso
-      have h_bad : forw_ke_forward_id = adv_id := by
-        simpa [ke_sender_to_forw_ke_forward_port, mk_input_port] using h_dest
-      exact forw_ke_forward_separated.2 h_bad
-    · exfalso
-      have h_bad : forw_ke_return_id = adv_id := by
-        simpa [ke_sender_to_forw_ke_return_port, mk_input_port] using h_dest
-      exact forw_ke_return_separated.2 h_bad
-  · simp [ke_receiver_machine, ke_receiver_to_smc_receiver_port,
-      ke_receiver_to_forw_ke_forward_port, ke_receiver_to_forw_ke_return_port] at hp
-    rcases hp with rfl | rfl | rfl
-    · exfalso
-      have h_bad : smc_receiver_id = adv_id := by
-        simpa [ke_receiver_to_smc_receiver_port, mk_subroutine_output_port] using h_dest
-      exact smc_receiver_separated.2 h_bad
-    · exfalso
-      have h_bad : forw_ke_forward_id = adv_id := by
-        simpa [ke_receiver_to_forw_ke_forward_port, mk_input_port] using h_dest
-      exact forw_ke_forward_separated.2 h_bad
-    · exfalso
-      have h_bad : forw_ke_return_id = adv_id := by
-        simpa [ke_receiver_to_forw_ke_return_port, mk_input_port] using h_dest
-      exact forw_ke_return_separated.2 h_bad
-  · change p ∈ Functionality.ForwImpl.communication_set forw_ke_forward_ids at hp
-    simp [Functionality.ForwImpl.communication_set] at hp
-    rcases hp with rfl | rfl | rfl
-    · exfalso
-      have h_bad : ke_sender_id = adv_id := by
-        simpa [forw_sender_port, forw_ke_forward_ids,
-          mk_subroutine_output_port] using h_dest
-      exact ke_sender_separated.2 h_bad
-    · exfalso
-      have h_bad : ke_receiver_id = adv_id := by
-        simpa [forw_receiver_port, forw_ke_forward_ids,
-          mk_subroutine_output_port] using h_dest
-      exact ke_receiver_separated.2 h_bad
-    · rfl
-  · change p ∈ Functionality.ForwImpl.communication_set forw_ke_return_ids at hp
-    simp [Functionality.ForwImpl.communication_set] at hp
-    rcases hp with rfl | rfl | rfl
-    · exfalso
-      have h_bad : ke_receiver_id = adv_id := by
-        simpa [forw_sender_port, forw_ke_return_ids,
-          mk_subroutine_output_port] using h_dest
-      exact ke_receiver_separated.2 h_bad
-    · exfalso
-      have h_bad : ke_sender_id = adv_id := by
-        simpa [forw_receiver_port, forw_ke_return_ids,
-          mk_subroutine_output_port] using h_dest
-      exact ke_sender_separated.2 h_bad
-    · rfl
-  · change p ∈ Functionality.ForwImpl.communication_set forw_smc_ids at hp
-    simp [Functionality.ForwImpl.communication_set] at hp
-    rcases hp with rfl | rfl | rfl
-    · exfalso
-      have h_bad : smc_sender_id = adv_id := by
-        simpa [forw_sender_port, forw_smc_ids,
-          mk_subroutine_output_port] using h_dest
-      exact smc_sender_separated.2 h_bad
-    · exfalso
-      have h_bad : smc_receiver_id = adv_id := by
-        simpa [forw_receiver_port, forw_smc_ids,
-          mk_subroutine_output_port] using h_dest
-      exact smc_receiver_separated.2 h_bad
-    · rfl
-
 /-- 审计约束：real-world 中显式连向 adversary 的 backdoor 只来自三个 `Forw` functionality。 -/
 theorem adversary_backdoor_targets_are_forw
     (gen : GroupGenerator) :
@@ -765,9 +655,7 @@ noncomputable def real_smc_protocol
     env_separated := real_smc_env_separated gen
     adv_separated := real_smc_adv_separated gen
     no_direct_environment_communication :=
-      real_smc_no_direct_environment_communication gen
-    adversary_communication_is_backdoor :=
-      real_smc_adversary_communication_is_backdoor gen }
+      real_smc_no_direct_environment_communication gen }
 /-- 两个 main machines 正是 SMC sender / receiver。 -/
 theorem smc_sender_is_main
     (gen : GroupGenerator) :

@@ -112,7 +112,7 @@ UC-realize：协议 `π` UC-emulate 从 `F` 自动构造出的 ideal protocol。
 
 如果理想功能需要 simulator 的控制接口，该接口必须由功能机自己的
 communication set 显式暴露为 backdoor/control port；controller 不再通过全局
-visible set 赋予 simulator 控制能力。针对 party 的 corruption 消息只由固定
+集合额外赋予 simulator 控制能力。针对 party 的 corruption 消息只由固定
 `ExecutionSetup.corrupted_parties` 控制，具体泄露和命令语义由 ideal functionality
 的 program 决定。
 -/
@@ -121,37 +121,8 @@ def UCRealizesAt {Payload : Type u}
     (corruption_pattern : Finset MachineId)
     (π : Protocol.{u, wπ} Payload)
     (f : IdealFunctionality Payload) : Prop :=
-  let φ := (mk_ideal_protocol f).protocol
-  match level with
-  | .perfect =>
-      ∀ A : Adversary.{u, 0} Payload,
-        ∃ S : Simulator.{u, 0} Payload,
-        ∀ E : Environment.{u, 0} Payload,
-          ∀ real_setup : ExecutionSetup π A E,
-            ∀ ideal_setup : ExecutionSetup φ S E,
-              real_setup.corrupted_parties = corruption_pattern →
-                ideal_setup.corrupted_parties = corruption_pattern →
-                  ∀ n, Controller.exec real_setup n = Controller.exec ideal_setup n
-  | .statistical =>
-      ∀ A : Adversary.{u, 0} Payload,
-        ∃ S : Simulator.{u, 0} Payload,
-        ∀ E : Environment.{u, 0} Payload,
-          ∀ real_setup : ExecutionSetup π A E,
-            ∀ ideal_setup : ExecutionSetup φ S E,
-              real_setup.corrupted_parties = corruption_pattern →
-                ideal_setup.corrupted_parties = corruption_pattern →
-                  ∃ negl, Negligible negl ∧
-                    ∀ n, exec_diff real_setup ideal_setup n ≤ negl n
-  | .computational =>
-      ∀ A : Adversary.{u, 0} Payload, PPT A →
-        ∃ S : Simulator.{u, 0} Payload, PPT S ∧
-          ∀ E : Environment.{u, 0} Payload, PPT E →
-            ∀ real_setup : ExecutionSetup π A E,
-              ∀ ideal_setup : ExecutionSetup φ S E,
-                real_setup.corrupted_parties = corruption_pattern →
-                  ideal_setup.corrupted_parties = corruption_pattern →
-                    ∃ negl, Negligible negl ∧
-                      ∀ n, exec_diff real_setup ideal_setup n ≤ negl n
+  UCEmulatesAt.{u, wπ, 0, 0, 0, 0}
+    level corruption_pattern π (mk_ideal_protocol f).protocol
 
 /-- 常用简写。 -/
 def UCRealizesPerfect {Payload : Type u}

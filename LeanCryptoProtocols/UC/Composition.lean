@@ -3,8 +3,7 @@ import LeanCryptoProtocols.UC.Security
 /-!
 # 基于执行约化的 universal composition
 
-本文件删除旧的 `ProtocolShape` / `ExecutableProtocol` 兼容层，
-改为直接对当前主线的
+本文件直接对当前主线的
 
 - `Protocol`
 - `ExecutionSetup`

@@ -59,7 +59,6 @@ def simulator_to_ideal_ke_port : CommPort :=
 private def release_init_envelope : Envelope SMCEasyUCPayload :=
   { port := simulator_to_ideal_ke_port
     message := {
-      source := some adv_id
       label := .backdoor
       payload := .ke .release_init
     }
@@ -69,7 +68,6 @@ private def release_init_envelope : Envelope SMCEasyUCPayload :=
 private def release_confirm_envelope : Envelope SMCEasyUCPayload :=
   { port := simulator_to_ideal_ke_port
     message := {
-      source := some adv_id
       label := .backdoor
       payload := .ke .release_confirm
     }
@@ -83,7 +81,6 @@ private def adversary_requested_release (payload : SMCEasyUCPayload) : Bool :=
 
 private def first_observe_message
     (share : GroupElement) : Message SMCEasyUCPayload := {
-  source := some forw_ke_forward_id
   label := .backdoor
   payload := .forw
     (.observe ke_sender_id ke_receiver_id (.ke_first share))
@@ -91,7 +88,6 @@ private def first_observe_message
 
 private def second_observe_message
     (share : GroupElement) : Message SMCEasyUCPayload := {
-  source := some forw_ke_return_id
   label := .backdoor
   payload := .forw
     (.observe ke_receiver_id ke_sender_id (.ke_second share))
@@ -117,7 +113,6 @@ private def translate_adversary_outgoing
     (stage, some {
       port := simulator_to_environment_port
       message := {
-        source := some adv_id
         label := .backdoor
         payload := env.message.payload
       }
@@ -243,15 +238,9 @@ noncomputable def simulator
     (A : Adversary SMCEasyUCPayload) : Simulator SMCEasyUCPayload where
   machine := simulator_machine gen none A
   id_matches := rfl
-  unique_backdoor_port_to_environment := by
-    refine ⟨simulator_to_environment_port, ?_, ?_⟩
-    · refine ⟨?_, rfl, rfl⟩
-      simp [simulator_machine, simulator_to_environment_port]
-    · intro y hy
-      rcases hy with ⟨hy_mem, _hy_dest, _hy_label⟩
-      simp [simulator_machine, simulator_to_environment_port] at hy_mem
-      rcases hy_mem with rfl
-      rfl
+  communication_set_is_singleton_backdoor_to_environment := by
+    refine ⟨simulator_to_environment_port, ?_, rfl, rfl⟩
+    simp [simulator_machine, simulator_to_environment_port]
 
 /-! ## DDH challenge-programmed executions -/
 
@@ -367,15 +356,9 @@ noncomputable def simulator_with_view
     (A : Adversary SMCEasyUCPayload) : Simulator SMCEasyUCPayload where
   machine := simulator_machine gen (some view) A
   id_matches := rfl
-  unique_backdoor_port_to_environment := by
-    refine ⟨simulator_to_environment_port, ?_, ?_⟩
-    · refine ⟨?_, rfl, rfl⟩
-      simp [simulator_machine, simulator_to_environment_port]
-    · intro y hy
-      rcases hy with ⟨hy_mem, _hy_dest, _hy_label⟩
-      simp [simulator_machine, simulator_to_environment_port] at hy_mem
-      rcases hy_mem with rfl
-      rfl
+  communication_set_is_singleton_backdoor_to_environment := by
+    refine ⟨simulator_to_environment_port, ?_, rfl, rfl⟩
+    simp [simulator_machine, simulator_to_environment_port]
 
 /-- 用显式 key material 固定 IdealKE 的 key-only sampler。 -/
 noncomputable def ideal_ke_ids_with_key
@@ -743,7 +726,6 @@ def challenge_initiator_first_envelope
     (sample : DDHSample.{0}) : Envelope SMCEasyUCPayload :=
   { port := ke_sender_to_forw_ke_forward_port
     message := {
-      source := some ke_sender_id
       label := .input
       payload := .forw
         (.submit ke_sender_id ke_receiver_id
@@ -756,7 +738,6 @@ def challenge_responder_second_envelope
     (sample : DDHSample.{0}) : Envelope SMCEasyUCPayload :=
   { port := ke_receiver_to_forw_ke_return_port
     message := {
-      source := some ke_receiver_id
       label := .input
       payload := .forw
         (.submit ke_receiver_id ke_sender_id
@@ -877,7 +858,6 @@ theorem project_responder_state_of_witness_initial
 
 /-- 外层 caller 发给 DHKE initiator 的合法初始化消息。 -/
 def initiator_init_message : Message SMCEasyUCPayload := {
-  source := some smc_sender_id
   label := .input
   payload := .ke .init
 }
@@ -885,7 +865,6 @@ def initiator_init_message : Message SMCEasyUCPayload := {
 /-- 第一条 `Forw` 交付给 responder 的合法消息。 -/
 def first_share_delivered_message
     (sample : DDHSample.{0}) : Message SMCEasyUCPayload := {
-  source := some forw_ke_forward_id
   label := .subroutineOutput
   instruction := .dummyDestination smc_receiver_id
   payload := .forw
@@ -905,7 +884,6 @@ def first_share_delivered_message
 /-- 第二条 `Forw` 交付给 initiator 的合法消息。 -/
 def second_share_delivered_message
     (sample : DDHSample.{0}) : Message SMCEasyUCPayload := {
-  source := some forw_ke_return_id
   label := .subroutineOutput
   instruction := .dummyDestination smc_sender_id
   payload := .forw
@@ -1596,17 +1574,6 @@ theorem challenge_real_no_direct_environment_communication
     lift_machine_to_type1] using
     (real_no_direct_environment_communication gen)
 
-theorem challenge_real_adversary_communication_is_backdoor
-    (gen : GroupGenerator) (sample : DDHSample.{0}) :
-    ∀ m ∈ challenge_real_machines gen sample, ∀ p ∈ m.2.communication_set,
-      p.dest = adv_id → p.label = .backdoor := by
-  simpa [challenge_real_machines, real_machines,
-    challenge_protocol_ke_sender_machine, challenge_protocol_ke_receiver_machine,
-    challenge_ke_sender_machine, challenge_ke_receiver_machine,
-    ke_sender_machine, protocol_ke_receiver_machine, ke_receiver_machine,
-    lift_machine_to_type1] using
-    (real_adversary_communication_is_backdoor gen)
-
 noncomputable def challenge_real_protocol
     (gen : GroupGenerator) (sample : DDHSample.{0}) :
     Protocol SMCEasyUCPayload where
@@ -1620,8 +1587,6 @@ noncomputable def challenge_real_protocol
   adv_separated := challenge_real_adv_separated gen sample
   no_direct_environment_communication :=
     challenge_real_no_direct_environment_communication gen sample
-  adversary_communication_is_backdoor :=
-    challenge_real_adversary_communication_is_backdoor gen sample
 
 /--
 challenge-programmed 真实协议在固定安全参数下的默认初始状态。
@@ -1861,15 +1826,6 @@ noncomputable def challenge_real_setup_of_real_setup
     (real_setup : ExecutionSetup (real_protocol gen) A E) :
     ExecutionSetup (challenge_real_protocol gen sample) A E where
   corrupted_parties := real_setup.corrupted_parties
-  env_port_policy_holds := by
-    intro p hp
-    rcases real_setup.env_port_policy_holds p hp with h_backdoor | h_input
-    · exact Or.inl h_backdoor
-    · rcases h_input with ⟨h_not_adv, h_label, h_main⟩
-      exact Or.inr ⟨h_not_adv, h_label,
-        (challenge_real_is_main_machine_iff gen sample p.dest).2 h_main⟩
-  adv_port_destinations_restricted :=
-    real_setup.adv_port_destinations_restricted
 
 /--
 把标准 ideal KE setup 搬到 component-programmed ideal protocol。
@@ -1888,19 +1844,6 @@ noncomputable def component_ideal_setup_of_ideal_setup
     ExecutionSetup (ideal_protocol_of_components gen components)
       (simulator_of_components gen components A) E where
   corrupted_parties := ideal_setup.corrupted_parties
-  env_port_policy_holds := by
-    intro p hp
-    rcases ideal_setup.env_port_policy_holds p hp with h_backdoor | h_input
-    · exact Or.inl h_backdoor
-    · rcases h_input with ⟨h_not_adv, h_label, h_main⟩
-      exact Or.inr ⟨h_not_adv, h_label,
-        (ideal_protocol_of_components_is_main_machine_iff gen components p.dest).2 h_main⟩
-  adv_port_destinations_restricted := by
-    intro p hp
-    simp [simulator_of_components, simulator_with_view,
-      simulator_machine, simulator_to_environment_port] at hp
-    rcases hp with rfl
-    rfl
 
 /--
 把标准 ideal KE setup 搬到 DDH challenge-programmed ideal protocol。

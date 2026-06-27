@@ -177,7 +177,6 @@ def build_receiver_response (ids : OTIds)
     Envelope OTPayload := {
   port := receiver_port ids
   message := {
-    source := some ids.functionality_id
     label := .subroutineOutput
     instruction := .dummyDestination ids.receiver_external_id
     payload := .receiver_resp sid ssid (F_OT sender choice)

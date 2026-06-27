@@ -81,29 +81,29 @@ noncomputable def render_machine_id_finset
   | [] => "<none>"
   | lines => join_with ", " lines
 
-noncomputable def render_adversary_surface {Payload : Type u}
-    (names : AuditNames) (π : Protocol Payload) (visible : Finset MachineId) : String := by
-  classical
-  let lines :=
-    π.machines.filterMap fun m =>
-      if AnyMachine.id m ∈ visible then
-        some ("- " ++ render_machine_id names (AnyMachine.id m) ++ "\n" ++
-          render_port_list names (m.2.communication_set.filter fun p => p.dest = adv_id))
-      else
-        none
-  exact
-    match lines with
-    | [] => "Adversary-visible surface:\n- <none>"
-    | ls => "Adversary-visible surface:\n" ++ join_with "\n" ls
+def render_adversarial_control_target (names : AuditNames) (mid : MachineId) : String :=
+  "- " ++ render_machine_id names adv_id ++ " <--backdoor--> " ++
+    render_machine_id names mid
+
+/--
+Controller 在运行时为 adversary 与每台 protocol machine 添加双向 backdoor 端口。
+该报告直接从 protocol machine 列表推导控制面，不接受额外的控制目标列表。
+-/
+def render_adversarial_control_surface {Payload : Type u}
+    (names : AuditNames) (π : Protocol Payload) : String :=
+  match π.machines.map (fun m =>
+      render_adversarial_control_target names (AnyMachine.id m)) with
+  | [] => "Adversarial control surface:\n- <none>"
+  | lines => "Adversarial control surface:\n" ++ join_with "\n" lines
 
 noncomputable def render_protocol {Payload : Type u}
-    (names : AuditNames) (visible : Finset MachineId) (π : Protocol Payload) : String :=
+    (names : AuditNames) (π : Protocol Payload) : String :=
   "Protocol audit\n\n" ++
     "Main machines: " ++ render_machine_id_finset names π.main_machine_ids ++ "\n" ++
     "Internal machines: " ++ render_machine_id_finset names π.internal_machine_ids ++ "\n\n" ++
     "Machines and ports:\n" ++
     join_with "\n\n" (π.machines.map (render_protocol_machine names π)) ++
-    "\n\n" ++ render_adversary_surface names π visible
+    "\n\n" ++ render_adversarial_control_surface names π
 
 noncomputable def render_party_interface {Payload : Type u}
     (names : AuditNames) (f : IdealFunctionality Payload) (pid : MachineId) : String :=
@@ -148,7 +148,6 @@ structure ProtocolAuditView where
   main_ids : List MachineId
   internal_ids : List MachineId
   machines : List MachineAuditView
-  adversary_visible_ids : List MachineId
   deriving Repr, DecidableEq
 
 /-- Computable ideal-functionality view used when a case study wants terminal output. -/
@@ -176,10 +175,6 @@ def render_machine_view (names : AuditNames) (m : MachineAuditView) : String :=
     "    external identities: " ++ render_machine_id_list names m.external_ids ++ "\n" ++
     "    ports:\n" ++ render_port_view_list names m.ports
 
-def render_visible_machine_view (names : AuditNames) (m : MachineAuditView) : String :=
-  "- " ++ render_machine_id names m.id ++ "\n" ++
-    render_port_view_list names (m.ports.filter fun p => p.dest = adv_id)
-
 def render_protocol_view
     (names : AuditNames) (view : ProtocolAuditView) : String :=
   "Protocol audit\n\n" ++
@@ -187,10 +182,9 @@ def render_protocol_view
     "Internal machines: " ++ render_machine_id_list names view.internal_ids ++ "\n\n" ++
     "Machines and ports:\n" ++
     join_with "\n\n" (view.machines.map (render_machine_view names)) ++
-    "\n\nAdversary-visible surface:\n" ++
+    "\n\nAdversarial control surface:\n" ++
     join_with "\n"
-      ((view.machines.filter fun m => m.id ∈ view.adversary_visible_ids).map
-        (render_visible_machine_view names))
+      (view.machines.map fun m => render_adversarial_control_target names m.id)
 
 def render_party_interface_view
     (names : AuditNames) (row : MachineId × List MachineId) : String :=

@@ -426,59 +426,6 @@ theorem real_no_direct_environment_communication
     simp [Functionality.ForwImpl.communication_set] at hp
     rcases hp with rfl | rfl | rfl <;> decide
 
-theorem real_adversary_communication_is_backdoor
-    (gen : GroupGenerator) :
-    ∀ m ∈ real_machines gen, ∀ p ∈ m.2.communication_set,
-      p.dest = adv_id → p.label = .backdoor := by
-  intro m hm p hp h_dest
-  simp [real_machines] at hm
-  rcases hm with rfl | rfl | rfl | rfl
-  · simp [ke_sender_machine, ke_sender_to_smc_sender_port,
-      ke_sender_to_forw_ke_forward_port, ke_sender_to_forw_ke_return_port] at hp
-    rcases hp with rfl | rfl | rfl <;>
-      (exfalso; first
-        | exact smc_sender_separated.2 (by
-            simpa [ke_sender_to_smc_sender_port, mk_subroutine_output_port] using h_dest)
-        | exact forw_ke_forward_separated.2 (by
-            simpa [ke_sender_to_forw_ke_forward_port, mk_input_port] using h_dest)
-        | exact forw_ke_return_separated.2 (by
-            simpa [ke_sender_to_forw_ke_return_port, mk_input_port] using h_dest))
-  · simp [protocol_ke_receiver_machine, lift_machine_to_type1,
-      ke_receiver_machine, ke_receiver_to_smc_receiver_port,
-      ke_receiver_to_forw_ke_forward_port, ke_receiver_to_forw_ke_return_port] at hp
-    rcases hp with rfl | rfl | rfl <;>
-      (exfalso; first
-        | exact smc_receiver_separated.2 (by
-            simpa [ke_receiver_to_smc_receiver_port, mk_subroutine_output_port] using h_dest)
-        | exact forw_ke_forward_separated.2 (by
-            simpa [ke_receiver_to_forw_ke_forward_port, mk_input_port] using h_dest)
-        | exact forw_ke_return_separated.2 (by
-            simpa [ke_receiver_to_forw_ke_return_port, mk_input_port] using h_dest))
-  · change p ∈ Functionality.ForwImpl.communication_set forw_ke_forward_ids at hp
-    simp [Functionality.ForwImpl.communication_set] at hp
-    rcases hp with rfl | rfl | rfl
-    · exfalso
-      exact ke_sender_separated.2 (by
-        simpa [forw_sender_port, forw_ke_forward_ids,
-          mk_subroutine_output_port] using h_dest)
-    · exfalso
-      exact ke_receiver_separated.2 (by
-        simpa [forw_receiver_port, forw_ke_forward_ids,
-          mk_subroutine_output_port] using h_dest)
-    · rfl
-  · change p ∈ Functionality.ForwImpl.communication_set forw_ke_return_ids at hp
-    simp [Functionality.ForwImpl.communication_set] at hp
-    rcases hp with rfl | rfl | rfl
-    · exfalso
-      exact ke_receiver_separated.2 (by
-        simpa [forw_sender_port, forw_ke_return_ids,
-          mk_subroutine_output_port] using h_dest)
-    · exfalso
-      exact ke_sender_separated.2 (by
-        simpa [forw_receiver_port, forw_ke_return_ids,
-          mk_subroutine_output_port] using h_dest)
-    · rfl
-
 /-- 真实 DHKE protocol：两个 main KE machines 与两个 internal `Forw`。 -/
 noncomputable def real_protocol
     (gen : GroupGenerator) : Protocol SMCEasyUCPayload :=
@@ -489,7 +436,6 @@ noncomputable def real_protocol
     subroutine_has_matching_caller := real_subroutine_has_matching_caller gen
     env_separated := real_env_separated gen
     adv_separated := real_adv_separated gen
-    no_direct_environment_communication := real_no_direct_environment_communication gen
-    adversary_communication_is_backdoor := real_adversary_communication_is_backdoor gen }
+    no_direct_environment_communication := real_no_direct_environment_communication gen }
 
 end LeanCryptoProtocols.CaseStudy.SMCEasyUC.DHKE

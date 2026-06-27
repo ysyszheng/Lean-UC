@@ -109,7 +109,6 @@ def build_init_observe_envelope (ids : KEIds) :
       Envelope SMCEasyUCPayload :=
     { port := ke_adversary_port ids
       message := {
-        source := some ids.functionality_id
         label := .backdoor
         payload := .ke
           (.observe_init
@@ -123,7 +122,6 @@ def build_confirm_observe_envelope (ids : KEIds) :
       Envelope SMCEasyUCPayload :=
     { port := ke_adversary_port ids
       message := {
-        source := some ids.functionality_id
         label := .backdoor
         payload := .ke .observe_confirm
       }
@@ -134,7 +132,6 @@ def build_initiator_key_envelope (ids : KEIds)
     (shared_key : SharedKey) : Envelope SMCEasyUCPayload :=
   { port := ke_initiator_port ids
     message := {
-      source := some ids.functionality_id
       label := .subroutineOutput
       instruction := .dummyDestination ids.initiator_external_id
       payload := .ke (.key shared_key)
@@ -155,7 +152,6 @@ def build_responder_key_envelope (ids : KEIds)
     (shared_key : SharedKey) : Envelope SMCEasyUCPayload :=
   { port := ke_responder_port ids
     message := {
-      source := some ids.functionality_id
       label := .subroutineOutput
       instruction := .dummyDestination ids.responder_external_id
       payload := .ke (.key shared_key)

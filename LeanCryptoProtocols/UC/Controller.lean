@@ -28,15 +28,17 @@ namespace LeanCryptoProtocols.UC
 structure Environment (Payload : Type u) where
   machine : Machine Payload Bool
   id_matches : machine.id = env_id
-  unique_backdoor_port_to_adversary :
-    ∃! p, p ∈ machine.communication_set ∧ p.dest = adv_id ∧ p.label = .backdoor
+  communication_set_is_singleton_backdoor_to_adversary :
+    ∃ p, machine.communication_set = {p} ∧
+      p.dest = adv_id ∧ p.label = .backdoor
 
 /-- 敌手本身也是一个 machine；静态腐化集合由 `ExecutionSetup` 固定。 -/
 structure Adversary (Payload : Type u) where
   machine : Machine Payload Unit
   id_matches : machine.id = adv_id
-  unique_backdoor_port_to_environment :
-    ∃! p, p ∈ machine.communication_set ∧ p.dest = env_id ∧ p.label = .backdoor
+  communication_set_is_singleton_backdoor_to_environment :
+    ∃ p, machine.communication_set = {p} ∧
+      p.dest = env_id ∧ p.label = .backdoor
 
 /-- 在理想世界里，simulator 扮演 adversary 的角色。 -/
 abbrev Simulator (Payload : Type u) := Adversary Payload
@@ -52,13 +54,6 @@ structure ExecutionSetup {Payload : Type u}
     (environment : Environment Payload) where
   /-- 本次执行固定的 static corruption pattern。 -/
   corrupted_parties : Finset MachineId
-  env_port_policy_holds :
-    ∀ p ∈ environment.machine.communication_set,
-      (p.dest = adv_id ∧ p.label = .backdoor) ∨
-        (p.dest ≠ adv_id ∧ p.label = .input ∧ protocol.is_main_machine p.dest)
-  adv_port_destinations_restricted :
-    ∀ p ∈ adversary.machine.communication_set,
-      p.dest = env_id
 
 namespace ExecutionSetup
 
@@ -155,21 +150,16 @@ def routes_to_external_identity {Payload : Type u} {π : Protocol Payload}
     (_setup : ExecutionSetup π A E) (mid : MachineId) : Prop :=
   ∃ μ ∈ π.machines, π.is_external_identity_of μ mid
 
-/-- 环境发出的消息是否满足 source identity 约束。 -/
+/-- 环境调用 main machine 时是否提供了合法的 external identity。 -/
 def environment_source_valid {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
     (_setup : ExecutionSetup π A E) (envelope : Envelope Payload) : Prop :=
   if _h_adv : envelope.port.dest = adv_id then
-    envelope.message.source = none
+    True
   else
     ∃ ext_id,
       envelope.message.source = some ext_id ∧
         ext_id ∈ π.external_identities_of envelope.port.dest
-
-/-- 非环境发送者发出的消息是否满足 source identity 约束。 -/
-def sender_source_valid {Payload : Type u}
-    (sender_id : MachineId) (envelope : Envelope Payload) : Prop :=
-  envelope.message.source = some sender_id
 
 /-- core 层检查腐化指令是否越过固定 static corruption set。 -/
 def corruption_instruction_valid {Payload : Type u} {π : Protocol Payload}
@@ -193,7 +183,52 @@ def outgoing_message_valid {Payload : Type u} {π : Protocol Payload}
     (if _h_env : sender_id = env_id then
       setup.environment_source_valid envelope
     else
-      sender_source_valid sender_id envelope)
+      True)
+
+/--
+Controller 在投递前认证消息来源。
+
+普通 P2P 消息的 `source` 总是覆盖为当前发送 machine 的 identity。唯一例外是
+environment 调用 main machine：此时保留 environment 提供并已由
+`environment_source_valid` 检查的 external identity。
+-/
+def authenticated_message {Payload : Type u} {π : Protocol Payload}
+    {A : Adversary Payload} {E : Environment Payload}
+    (_setup : ExecutionSetup π A E)
+    (sender_id : MachineId) (envelope : Envelope Payload) : Message Payload :=
+  if _h_env : sender_id = env_id then
+    if _h_adv : envelope.port.dest = adv_id then
+      { envelope.message with source := some env_id }
+    else
+      envelope.message
+  else
+    { envelope.message with source := some sender_id }
+
+@[simp] theorem authenticated_message_of_sender_ne_environment
+    {Payload : Type u} {π : Protocol Payload}
+    {A : Adversary Payload} {E : Environment Payload}
+    (setup : ExecutionSetup π A E) (sender_id : MachineId)
+    (envelope : Envelope Payload) (h_sender : sender_id ≠ env_id) :
+    (setup.authenticated_message sender_id envelope).source = some sender_id := by
+  have h_sender' : sender_id ≠ 0 := by simpa [env_id] using h_sender
+  simp [authenticated_message, env_id, h_sender']
+
+@[simp] theorem authenticated_message_environment_to_adversary
+    {Payload : Type u} {π : Protocol Payload}
+    {A : Adversary Payload} {E : Environment Payload}
+    (setup : ExecutionSetup π A E) (envelope : Envelope Payload)
+    (h_dest : envelope.port.dest = adv_id) :
+    (setup.authenticated_message env_id envelope).source = some env_id := by
+  simp [authenticated_message, env_id, adv_id, h_dest]
+
+theorem authenticated_message_environment_to_non_adversary
+    {Payload : Type u} {π : Protocol Payload}
+    {A : Adversary Payload} {E : Environment Payload}
+    (setup : ExecutionSetup π A E) (envelope : Envelope Payload)
+    (h_dest : envelope.port.dest ≠ adv_id) :
+    setup.authenticated_message env_id envelope = envelope.message := by
+  have h_dest' : envelope.port.dest ≠ 1 := by simpa [adv_id] using h_dest
+  simp [authenticated_message, env_id, adv_id, h_dest']
 
 end ExecutionSetup
 
@@ -204,13 +239,6 @@ structure ProtocolMachineState (Payload : Type u) where
   state : machine.program.LocalState
 
 namespace ProtocolMachineState
-
-/-- 从异质 machine 初始化运行时状态。 -/
-def of_any_machine {Payload : Type u}
-    (m : AnyMachine Payload) (n : ℕ) : ProtocolMachineState Payload :=
-  { Out := m.1
-    machine := m.2
-    state := m.2.program.init n }
 
 /-- 从 protocol 提供的异质 machine state 初始化运行时状态。 -/
 def of_any_machine_state {Payload : Type u}
@@ -360,41 +388,42 @@ envelope，controller 立即把其中的 `Message` 投递给目标 machine 并�
 noncomputable def run_activation {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
     (setup : ExecutionSetup π A E) :
-    Nat → ControllerState setup → MachineId → Option (Message Payload) →
+    Nat → ControllerState setup → Option (Message Payload) →
       PMF (ControllerState setup)
-  | 0, st, _, _ => PMF.pure st
-  | fuel + 1, st, mid, incoming? => by
+  | 0, st, _ => PMF.pure st
+  | fuel + 1, st, incoming? => by
       classical
       if environment_halted st then
         exact PMF.pure st
       else
-        exact (activate_machine setup st mid incoming?).bind fun result =>
+        exact (activate_machine setup st st.active_id incoming?).bind fun result =>
           let st' := result.1
           match result.2 with
           | none =>
-              run_activation setup fuel ({ st' with active_id := env_id }) env_id none
+              run_activation setup fuel ({ st' with active_id := env_id }) none
           | some msg =>
-              if h_valid : setup.outgoing_message_valid mid msg then
+              if h_valid : setup.outgoing_message_valid st.active_id msg then
+                let incoming_message := setup.authenticated_message st.active_id msg
                 if h_sys : setup.routes_to_system_machine msg.port.dest then
                   if _h_env : msg.port.dest = env_id then
                     run_activation setup fuel ({ st' with active_id := env_id })
-                      env_id (some msg.message)
+                      (some incoming_message)
                   else if _h_adv : msg.port.dest = adv_id then
                     run_activation setup fuel ({ st' with active_id := adv_id })
-                      adv_id (some msg.message)
+                      (some incoming_message)
                   else
                     run_activation setup fuel ({ st' with active_id := msg.port.dest })
-                      msg.port.dest (some msg.message)
+                      (some incoming_message)
                 else if h_ext :
-                    mid ≠ env_id ∧
+                    st.active_id ≠ env_id ∧
                     setup.routes_to_external_identity msg.port.dest ∧
                     msg.message.label = .subroutineOutput then
                   run_activation setup fuel ({ st' with active_id := env_id })
-                    env_id (some msg.message)
+                    (some incoming_message)
                 else
-                  run_activation setup fuel ({ st' with active_id := env_id }) env_id none
+                  run_activation setup fuel ({ st' with active_id := env_id }) none
               else
-                run_activation setup fuel ({ st' with active_id := env_id }) env_id none
+                run_activation setup fuel ({ st' with active_id := env_id }) none
 
 /--
 在步数预算 `fuel` 内运行 controller。
@@ -405,7 +434,7 @@ noncomputable def run_steps {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
     (setup : ExecutionSetup π A E) (fuel : Nat)
     (st : ControllerState setup) : PMF (ControllerState setup) :=
-  run_activation setup fuel st st.active_id none
+  run_activation setup fuel st none
 
 /--
 在步数预算内运行 controller，并记录是正常 halt 还是耗尽预算。
