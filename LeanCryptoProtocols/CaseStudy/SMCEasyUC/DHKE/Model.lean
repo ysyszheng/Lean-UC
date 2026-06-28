@@ -1826,6 +1826,9 @@ noncomputable def challenge_real_setup_of_real_setup
     (real_setup : ExecutionSetup (real_protocol gen) A E) :
     ExecutionSetup (challenge_real_protocol gen sample) A E where
   corrupted_parties := real_setup.corrupted_parties
+  corrupted_parties_within_protocol := by
+    rw [challenge_real_machine_ids_eq_real gen sample]
+    exact real_setup.corrupted_parties_within_protocol
 
 /--
 把标准 ideal KE setup 搬到 component-programmed ideal protocol。
@@ -1844,6 +1847,9 @@ noncomputable def component_ideal_setup_of_ideal_setup
     ExecutionSetup (ideal_protocol_of_components gen components)
       (simulator_of_components gen components A) E where
   corrupted_parties := ideal_setup.corrupted_parties
+  corrupted_parties_within_protocol := by
+    rw [ideal_protocol_of_components_machine_ids_eq_ideal gen components]
+    exact ideal_setup.corrupted_parties_within_protocol
 
 /--
 把标准 ideal KE setup 搬到 DDH challenge-programmed ideal protocol。

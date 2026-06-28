@@ -54,6 +54,9 @@ structure ExecutionSetup {Payload : Type u}
     (environment : Environment Payload) where
   /-- 本次执行固定的 static corruption pattern。 -/
   corrupted_parties : Finset MachineId
+  /-- 静态腐化集合只能包含当前 protocol 中实际存在的 machine identity。 -/
+  corrupted_parties_within_protocol :
+    corrupted_parties ⊆ (machine_ids protocol.machines).toFinset
 
 namespace ExecutionSetup
 
@@ -164,13 +167,16 @@ def environment_source_valid {Payload : Type u} {π : Protocol Payload}
 /-- core 层检查腐化指令是否越过固定 static corruption set。 -/
 def corruption_instruction_valid {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
-    (_setup : ExecutionSetup π A E) (envelope : Envelope Payload) : Prop :=
+    (_setup : ExecutionSetup π A E)
+    (sender_id : MachineId) (envelope : Envelope Payload) : Prop :=
   match envelope.message.instruction with
   | .plain => True
   | .dummyCaller _ => True
   | .dummyDestination _ => True
   | .corrupt pid =>
-      envelope.message.label = .backdoor ∧ pid ∈ _setup.corrupted_parties
+      sender_id = adv_id ∧
+        envelope.message.label = .backdoor ∧
+        pid ∈ _setup.corrupted_parties
 
 /-- 当前发送者发出的消息是否满足 controller 的运行时检查。 -/
 def outgoing_message_valid {Payload : Type u} {π : Protocol Payload}
@@ -179,11 +185,24 @@ def outgoing_message_valid {Payload : Type u} {π : Protocol Payload}
     (sender_id : MachineId) (envelope : Envelope Payload) : Prop :=
   envelope.port.owner = sender_id ∧
     envelope.port ∈ setup.runtime_communication_set sender_id ∧
-    setup.corruption_instruction_valid envelope ∧
+    setup.corruption_instruction_valid sender_id envelope ∧
     (if _h_env : sender_id = env_id then
       setup.environment_source_valid envelope
     else
       True)
+
+/-- 通过 controller 腐化检查的 `.corrupt` 指令一定来自 adversary。 -/
+theorem corrupt_instruction_sender_is_adversary
+    {Payload : Type u} {π : Protocol Payload}
+    {A : Adversary Payload} {E : Environment Payload}
+    (setup : ExecutionSetup π A E) (sender_id pid : MachineId)
+    (envelope : Envelope Payload)
+    (h_instruction : envelope.message.instruction = .corrupt pid)
+    (h_valid : setup.corruption_instruction_valid sender_id envelope) :
+    sender_id = adv_id := by
+  unfold corruption_instruction_valid at h_valid
+  rw [h_instruction] at h_valid
+  exact h_valid.1
 
 /--
 Controller 在投递前认证消息来源。
