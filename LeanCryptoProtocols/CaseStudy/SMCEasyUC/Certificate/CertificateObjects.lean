@@ -1,4 +1,4 @@
-import LeanCryptoProtocols.Assumptions.DDH
+import LeanCryptoProtocols.CaseStudy.SMCEasyUC.DHKECommon
 import LeanCryptoProtocols.UC.Functionality.Forw
 import LeanCryptoProtocols.UC.Functionality.KE
 import LeanCryptoProtocols.UC.Functionality.SMC
@@ -401,12 +401,6 @@ def insert_key_if_absent
       else
         (sid', key') :: insert_key_if_absent rest sid key
 
-noncomputable def sample_public_group_element
-    (gen : GroupGenerator) (n : ℕ) : PMF GroupElement :=
-  (gen n).bind fun G =>
-    G.sample_exponent.bind fun a =>
-      PMF.pure ⟨G.encode (G.pow G.generator a)⟩
-
 structure SMCSenderState where
   waiting_message : Option (Sid × Plaintext)
   pending_outgoing : Option (Envelope SMCEasyUCPayload)
@@ -419,27 +413,13 @@ inductive KESenderAction where
   | send_first
   | output_key (peer_share : GroupElement)
 
-structure KESenderState where
-  sec_param : ℕ
-  local_share : Option GroupElement
+structure KESenderState (G : GroupDescription.{0}) where
+  secret? : Option (DHSecret G)
   pending_action : Option KESenderAction
 
-structure KEReceiverState where
-  sec_param : ℕ
+structure KEReceiverState (G : GroupDescription.{0}) where
   pending_action : Option GroupElement
   pending_outgoing : Option (Envelope SMCEasyUCPayload)
-
-def ke_sender_init (n : ℕ) : KESenderState := {
-  sec_param := n
-  local_share := none
-  pending_action := none
-}
-
-def ke_receiver_init (n : ℕ) : KEReceiverState := {
-  sec_param := n
-  pending_action := none
-  pending_outgoing := none
-}
 
 def smc_sender_receive (st : SMCSenderState)
     (msg : Message SMCEasyUCPayload) : SMCSenderState :=
@@ -493,24 +473,6 @@ def smc_receiver_receive (st : SMCReceiverState)
   | _ =>
       st
 
-def ke_sender_receive (st : KESenderState)
-    (msg : Message SMCEasyUCPayload) : KESenderState :=
-  match msg.payload with
-  | .ke .init =>
-      { st with pending_action := some .send_first }
-  | .forw (.delivered _ _ (.ke_second share)) =>
-      { st with pending_action := some (.output_key share) }
-  | _ =>
-      st
-
-def ke_receiver_receive (st : KEReceiverState)
-    (msg : Message SMCEasyUCPayload) : KEReceiverState :=
-  match msg.payload with
-  | .forw (.delivered _ _ (.ke_first share)) =>
-      { st with pending_action := some share }
-  | _ =>
-      st
-
 private def ke_sender_key_envelope
     (shared_key : SharedKey) :
     Envelope SMCEasyUCPayload :=
@@ -532,77 +494,6 @@ private def ke_receiver_key_envelope
     }
     label_matches := rfl
   }
-
-noncomputable def ke_sender_resume
-    (gen : GroupGenerator)
-    (st : KESenderState) : PMF (ActivationResult SMCEasyUCPayload KESenderState) :=
-  match st.pending_action with
-  | none =>
-      PMF.pure {
-        state := st
-        outgoing? := none
-      }
-  | some .send_first =>
-      sample_public_group_element gen st.sec_param |>.bind fun share =>
-        PMF.pure {
-          state := { st with local_share := some share, pending_action := none }
-          outgoing? := some {
-            port := ke_sender_to_forw_ke_forward_port
-            message := {
-              label := .input
-              payload := .forw
-                (.submit ke_sender_id ke_receiver_id (.ke_first share))
-            }
-            label_matches := rfl
-          }
-        }
-  | some (.output_key peer_share) =>
-      let shared_key :=
-        match st.local_share with
-        | some share => derive_shared_key share peer_share
-        | none => default_shared_key
-      PMF.pure {
-        state := { st with local_share := none, pending_action := none }
-        outgoing? := some (ke_sender_key_envelope shared_key)
-      }
-
-noncomputable def ke_receiver_resume
-    (gen : GroupGenerator)
-    (st : KEReceiverState) :
-    PMF (ActivationResult SMCEasyUCPayload KEReceiverState) :=
-  match st.pending_outgoing with
-  | some env =>
-      PMF.pure {
-        state := { st with pending_outgoing := none }
-        outgoing? := some env
-      }
-  | none =>
-      match st.pending_action with
-      | none =>
-          PMF.pure {
-            state := st
-            outgoing? := none
-          }
-      | some peer_share =>
-          sample_public_group_element gen st.sec_param |>.bind fun share =>
-            let shared_key := derive_shared_key peer_share share
-            PMF.pure {
-              state := {
-                st with
-                  pending_action := none
-                  pending_outgoing := some (ke_receiver_key_envelope shared_key)
-              }
-              outgoing? := some {
-                port := ke_receiver_to_forw_ke_return_port
-                message := {
-                  label := .input
-                  payload := .forw
-                    (.submit ke_receiver_id ke_sender_id
-                      (.ke_second share))
-                }
-                label_matches := rfl
-              }
-            }
 
 noncomputable def smc_sender_program :
     MachineProgram SMCEasyUCPayload Unit where
@@ -697,9 +588,9 @@ noncomputable def smc_receiver_program :
   output := fun _ => ()
 
 noncomputable def ke_sender_program
-    (gen : GroupGenerator) : MachineProgram SMCEasyUCPayload Unit where
-  LocalState := KESenderState
-  init := ke_sender_init
+    (G : GroupDescription.{0}) : MachineProgram SMCEasyUCPayload Unit where
+  LocalState := KESenderState G
+  init := fun _ => { secret? := none, pending_action := none }
   activate := fun st incoming? =>
     let st' :=
       match incoming? with
@@ -719,35 +610,36 @@ noncomputable def ke_sender_program
           outgoing? := none
         }
     | some .send_first =>
-        sample_public_group_element gen st'.sec_param |>.bind fun share =>
+        (sample_dh_secret G).bind fun secret =>
           PMF.pure {
-            state := { st' with local_share := some share, pending_action := none }
+            state := { st' with secret? := some secret, pending_action := none }
             outgoing? := some {
               port := ke_sender_to_forw_ke_forward_port
               message := {
                 label := .input
                 payload := .forw
-                  (.submit ke_sender_id ke_receiver_id (.ke_first share))
+                  (.submit ke_sender_id ke_receiver_id
+                    (.ke_first secret.public_share))
               }
               label_matches := rfl
             }
           }
     | some (.output_key peer_share) =>
         let shared_key :=
-          match st'.local_share with
-          | some share => derive_shared_key share peer_share
+          match st'.secret? with
+          | some secret => derive_key_from_secret secret peer_share
           | none => default_shared_key
         PMF.pure {
-          state := { st' with local_share := none, pending_action := none }
+          state := { st' with secret? := none, pending_action := none }
           outgoing? := some (ke_sender_key_envelope shared_key)
         }
   is_halted := fun _ => false
   output := fun _ => ()
 
 noncomputable def ke_receiver_program
-    (gen : GroupGenerator) : MachineProgram SMCEasyUCPayload Unit where
-  LocalState := KEReceiverState
-  init := ke_receiver_init
+    (G : GroupDescription.{0}) : MachineProgram SMCEasyUCPayload Unit where
+  LocalState := KEReceiverState G
+  init := fun _ => { pending_action := none, pending_outgoing := none }
   activate := fun st incoming? =>
     let st' :=
       match incoming? with
@@ -772,8 +664,8 @@ noncomputable def ke_receiver_program
               outgoing? := none
             }
         | some peer_share =>
-            sample_public_group_element gen st'.sec_param |>.bind fun share =>
-              let shared_key := derive_shared_key peer_share share
+            (sample_dh_secret G).bind fun secret =>
+              let shared_key := derive_key_from_secret secret peer_share
               PMF.pure {
                 state := {
                   st' with
@@ -786,7 +678,7 @@ noncomputable def ke_receiver_program
                     label := .input
                     payload := .forw
                       (.submit ke_receiver_id ke_sender_id
-                        (.ke_second share))
+                        (.ke_second secret.public_share))
                   }
                   label_matches := rfl
                 }

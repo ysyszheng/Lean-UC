@@ -42,12 +42,11 @@ theorem ideal_ke_separated :
 def machine_id_list : List MachineId :=
   [ke_sender_id, ke_receiver_id, forw_ke_forward_id, forw_ke_return_id]
 
-/-- DHKE 理想功能使用的随机 key 分布：采样群、采样指数，输出 `g^c` 的编码。 -/
+/-- DHKE 理想功能使用的随机 key 分布：在固定群中采样 `c`，输出 `g^c`。 -/
 noncomputable def sample_shared_key
-    (gen : GroupGenerator.{0}) (n : ℕ) : PMF SharedKey :=
-  (gen n).bind fun G =>
-    G.sample_exponent.bind fun c =>
-      PMF.pure ⟨G.encode (G.pow G.generator c)⟩
+    (G : GroupDescription.{0}) (_n : ℕ) : PMF SharedKey :=
+  G.sample_exponent.bind fun c =>
+    PMF.pure ⟨G.encode (G.pow G.generator c)⟩
 
 /--
 DHKE 理想功能使用的 key-only sampler。
@@ -56,23 +55,23 @@ DHKE 理想功能使用的 key-only sampler。
 状态的一部分，而是由 simulator 负责模拟。
 -/
 noncomputable def sample_ideal_ke_key
-    (gen : GroupGenerator.{0}) (n : ℕ) : PMF KEIdealKeyMaterial :=
-  (sample_shared_key gen n).bind fun shared_key =>
+    (G : GroupDescription.{0}) (n : ℕ) : PMF KEIdealKeyMaterial :=
+  (sample_shared_key G n).bind fun shared_key =>
     PMF.pure { shared_key := shared_key }
 
 /-- `sample_ideal_ke_key` 正是 `sample_shared_key` 的 key-only 包装。 -/
 theorem sample_ideal_ke_key_eq_sample_shared_key
-    (gen : GroupGenerator.{0}) (n : ℕ) :
-    sample_ideal_ke_key gen n =
-      (sample_shared_key gen n).bind fun shared_key =>
+    (G : GroupDescription.{0}) (n : ℕ) :
+    sample_ideal_ke_key G n =
+      (sample_shared_key G n).bind fun shared_key =>
         PMF.pure { shared_key := shared_key } := by
   rfl
 
 /-- DDH-random 的 key component 投影，用于 corrected challenge-ideal coupling。 -/
 noncomputable def sample_ddh_random_key
-    (gen : GroupGenerator.{0}) (n : ℕ) : PMF KEIdealKeyMaterial :=
-  (ddh_random gen n).bind fun sample =>
-    PMF.pure { shared_key := ⟨sample.1.encode sample.2.gz⟩ }
+    (G : GroupDescription.{0}) (n : ℕ) : PMF KEIdealKeyMaterial :=
+  (ddh_random G n).bind fun sample =>
+    PMF.pure { shared_key := ⟨G.encode sample.gz⟩ }
 
 /--
 DDH-random challenge 的 key component 边缘分布等于 IdealKE 的 key-only sampler。
@@ -81,146 +80,73 @@ DDH-random challenge 的 key component 边缘分布等于 IdealKE 的 key-only s
 在 key 投影下被忽略。
 -/
 theorem sample_ddh_random_key_eq_sample_ideal_ke_key
-    (gen : GroupGenerator.{0}) (n : ℕ) :
-    sample_ddh_random_key gen n = sample_ideal_ke_key gen n := by
+    (G : GroupDescription.{0}) (n : ℕ) :
+    sample_ddh_random_key G n = sample_ideal_ke_key G n := by
   simp [sample_ddh_random_key, sample_ideal_ke_key, sample_shared_key,
     ddh_random, PMF.bind_bind]
 
 /-- DDH-real 的 key component 投影。 -/
 noncomputable def sample_ddh_real_key
-    (gen : GroupGenerator.{0}) (n : ℕ) : PMF KEIdealKeyMaterial :=
-  (ddh_real gen n).bind fun sample =>
-    PMF.pure { shared_key := ⟨sample.1.encode sample.2.gz⟩ }
+    (G : GroupDescription.{0}) (n : ℕ) : PMF KEIdealKeyMaterial :=
+  (ddh_real G n).bind fun sample =>
+    PMF.pure { shared_key := ⟨G.encode sample.gz⟩ }
 
 /-! ## Real DHKE local programs -/
-
-/-- 真实 DH party 的本地 secret：群描述、指数和公开 share。 -/
-structure DHSecret where
-  G : GroupDescription.{0}
-  exponent : G.Exponent
-  public_share : GroupElement
 
 /--
 证明真实 DHKE 与 DDH-real game 等价时使用的 witness sample。
 
 标准 DDH distinguisher 只能看到 `to_sample` 中的群元素；
-证明中额外保留 `a,b`，用于初始化真实 party 的本地 secret exponent。
+证明中额外保留 `a,b`，以便后续对 protocol 执行与 DDH game 进行耦合。
+该 witness 不参与 protocol 初始化；真实 machines 在每次会话中自行采样指数。
 -/
-structure DDHRealWitness where
-  G : GroupDescription.{0}
+structure DDHRealWitness (G : GroupDescription.{0}) where
   initiator_exponent : G.Exponent
   responder_exponent : G.Exponent
 
 namespace DDHRealWitness
 
 /-- witness 投影成标准 DDH-real sample。 -/
-def to_sample (w : DDHRealWitness) : DDHSample.{0} :=
-  ⟨w.G,
-    { gx := w.G.pow w.G.generator w.initiator_exponent
-      gy := w.G.pow w.G.generator w.responder_exponent
-      gz := w.G.pow w.G.generator
-        (w.G.mul_exp w.initiator_exponent w.responder_exponent) }⟩
+def to_sample {G : GroupDescription.{0}} (w : DDHRealWitness G) : DDHChallenge G :=
+  { gx := G.pow G.generator w.initiator_exponent
+    gy := G.pow G.generator w.responder_exponent
+    gz := G.pow G.generator
+      (G.mul_exp w.initiator_exponent w.responder_exponent) }
 
 /-- witness 中 initiator 的真实本地 secret。 -/
-def initiator_secret (w : DDHRealWitness) : DHSecret :=
-  { G := w.G
-    exponent := w.initiator_exponent
+def initiator_secret {G : GroupDescription.{0}}
+    (w : DDHRealWitness G) : DHSecret G :=
+  { exponent := w.initiator_exponent
     public_share :=
-      ⟨w.G.encode (w.G.pow w.G.generator w.initiator_exponent)⟩ }
+      ⟨G.encode (G.pow G.generator w.initiator_exponent)⟩ }
 
 /-- witness 中 responder 的真实本地 secret。 -/
-def responder_secret (w : DDHRealWitness) : DHSecret :=
-  { G := w.G
-    exponent := w.responder_exponent
+def responder_secret {G : GroupDescription.{0}}
+    (w : DDHRealWitness G) : DHSecret G :=
+  { exponent := w.responder_exponent
     public_share :=
-      ⟨w.G.encode (w.G.pow w.G.generator w.responder_exponent)⟩ }
+      ⟨G.encode (G.pow G.generator w.responder_exponent)⟩ }
 
 end DDHRealWitness
 
 /-- 采样带 exponent witness 的 DDH-real 实验。 -/
 noncomputable def ddh_real_witness
-    (gen : GroupGenerator.{0}) (n : ℕ) : PMF DDHRealWitness :=
-  (gen n).bind fun G =>
-    G.sample_exponent.bind fun a =>
-      G.sample_exponent.bind fun b =>
-        PMF.pure {
-          G := G
-          initiator_exponent := a
-          responder_exponent := b
-        }
+    (G : GroupDescription.{0}) (_n : ℕ) : PMF (DDHRealWitness G) :=
+  G.sample_exponent.bind fun a =>
+    G.sample_exponent.bind fun b =>
+      PMF.pure {
+        initiator_exponent := a
+        responder_exponent := b
+      }
 
 /-- `ddh_real_witness` 投影后就是标准 DDH-real 分布。 -/
 theorem ddh_real_witness_to_sample_eq_ddh_real
-    (gen : GroupGenerator.{0}) (n : ℕ) :
-    (ddh_real_witness gen n).bind
+    (G : GroupDescription.{0}) (n : ℕ) :
+    (ddh_real_witness G n).bind
         (fun w => PMF.pure w.to_sample) =
-      ddh_real gen n := by
+      ddh_real G n := by
   simp [ddh_real_witness, DDHRealWitness.to_sample, ddh_real,
     PMF.bind_bind]
-
-/-- 采样 secret exponent `a` 并给出公开 share `g^a`。 -/
-noncomputable def sample_dh_secret
-    (gen : GroupGenerator.{0}) (n : ℕ) : PMF DHSecret :=
-  (gen n).bind fun G =>
-    G.sample_exponent.bind fun a =>
-      PMF.pure {
-        G := G
-        exponent := a
-        public_share := ⟨G.encode (G.pow G.generator a)⟩
-      }
-
-/-- 在已经公开固定的群描述 `G` 中采样 secret exponent 与公开 share。 -/
-noncomputable def sample_dh_secret_in_group
-    (G : GroupDescription.{0}) : PMF DHSecret :=
-  G.sample_exponent.bind fun a =>
-    PMF.pure {
-      G := G
-      exponent := a
-      public_share := ⟨G.encode (G.pow G.generator a)⟩
-    }
-
-/-- 用本地 secret exponent 和对方公开 share 计算 DH key。 -/
-def derive_key_from_secret
-    (secret : DHSecret) (peer_share : GroupElement) : SharedKey :=
-  match secret.G.decode peer_share.value with
-  | some peer_element =>
-      ⟨secret.G.encode (secret.G.pow peer_element secret.exponent)⟩
-  | none =>
-      default_shared_key
-
-/--
-在同一个群描述 `G` 下，持有 exponent `a` 的一方收到 `g^b` 后，
-`derive_key_from_secret` 得到的 key 正是 `g^(ab)` 的编码。
--/
-theorem derive_key_from_secret_generator
-    (G : GroupDescription.{0}) (a b : G.Exponent) :
-    derive_key_from_secret
-        { G := G
-          exponent := a
-          public_share := ⟨G.encode (G.pow G.generator a)⟩ }
-        ⟨G.encode (G.pow G.generator b)⟩ =
-      ⟨G.encode (G.pow G.generator (G.mul_exp a b))⟩ := by
-  simp [derive_key_from_secret, G.decode_encode]
-  rw [← G.pow_mul_generator_comm a b, G.pow_mul_generator]
-
-/--
-在同一个群描述 `G` 下，双方分别持有 `a` 和 `b` 时，
-从对方公开 share 计算出的 DH key 相同。
--/
-theorem derive_key_from_secret_comm
-    (G : GroupDescription.{0}) (a b : G.Exponent) :
-    derive_key_from_secret
-        { G := G
-          exponent := a
-          public_share := ⟨G.encode (G.pow G.generator a)⟩ }
-        ⟨G.encode (G.pow G.generator b)⟩ =
-      derive_key_from_secret
-        { G := G
-          exponent := b
-          public_share := ⟨G.encode (G.pow G.generator b)⟩ }
-        ⟨G.encode (G.pow G.generator a)⟩ := by
-  simp [derive_key_from_secret, G.decode_encode]
-  exact congrArg G.encode (G.pow_mul_generator_comm a b).symm
 
 inductive InitiatorAction where
   | send_first
@@ -236,32 +162,24 @@ inductive ResponderPhase where
   | sent_second
   | done
 
-structure InitiatorState where
-  sec_param : ℕ
-  group? : Option GroupDescription.{0}
-  secret? : Option DHSecret
+structure InitiatorState (G : GroupDescription.{0}) where
+  secret? : Option (DHSecret G)
   phase : InitiatorPhase
   pending_action : Option InitiatorAction
 
-structure ResponderState where
-  sec_param : ℕ
-  group? : Option GroupDescription.{0}
-  secret? : Option DHSecret
+structure ResponderState (G : GroupDescription.{0}) where
+  secret? : Option (DHSecret G)
   phase : ResponderPhase
   pending_peer_share : Option GroupElement
   pending_outgoing : Option (Envelope SMCEasyUCPayload)
 
-def initiator_init (n : ℕ) : InitiatorState := {
-  sec_param := n
-  group? := none
+def initiator_init (G : GroupDescription.{0}) (_n : ℕ) : InitiatorState G := {
   secret? := none
   phase := .waiting_init
   pending_action := none
 }
 
-def responder_init (n : ℕ) : ResponderState := {
-  sec_param := n
-  group? := none
+def responder_init (G : GroupDescription.{0}) (_n : ℕ) : ResponderState G := {
   secret? := none
   phase := .waiting_first
   pending_peer_share := none
@@ -290,9 +208,9 @@ def responder_key_envelope
     label_matches := rfl
   }
 
-def initiator_receive (st : InitiatorState)
+def initiator_receive {G : GroupDescription.{0}} (st : InitiatorState G)
     (msg : Message SMCEasyUCPayload) :
-    InitiatorState :=
+    InitiatorState G :=
   match st.phase, msg.label, msg.payload with
   | .waiting_init, .input, .ke .init =>
       { st with
@@ -304,9 +222,9 @@ def initiator_receive (st : InitiatorState)
   | _, _, _ =>
       st
 
-def responder_receive (st : ResponderState)
+def responder_receive {G : GroupDescription.{0}} (st : ResponderState G)
     (msg : Message SMCEasyUCPayload) :
-    ResponderState :=
+    ResponderState G :=
   match st.phase, msg.label, msg.payload with
   | .waiting_first, .subroutineOutput,
       .forw (.delivered _ _ (.ke_first share)) =>
@@ -315,9 +233,9 @@ def responder_receive (st : ResponderState)
       st
 
 noncomputable def initiator_resume
-    (gen : GroupGenerator)
-    (st : InitiatorState) :
-    PMF (ActivationResult SMCEasyUCPayload InitiatorState) :=
+    (G : GroupDescription.{0})
+    (st : InitiatorState G) :
+    PMF (ActivationResult SMCEasyUCPayload (InitiatorState G)) :=
   match st.pending_action with
   | none =>
       PMF.pure {
@@ -327,10 +245,7 @@ noncomputable def initiator_resume
   | some .send_first =>
       (match st.secret? with
         | some secret => PMF.pure secret
-        | none =>
-            match st.group? with
-            | some G => sample_dh_secret_in_group G
-            | none => sample_dh_secret gen st.sec_param).bind fun secret =>
+        | none => sample_dh_secret G).bind fun secret =>
         PMF.pure {
           state := {
             st with
@@ -364,9 +279,9 @@ noncomputable def initiator_resume
       }
 
 noncomputable def responder_resume
-    (gen : GroupGenerator)
-    (st : ResponderState) :
-    PMF (ActivationResult SMCEasyUCPayload ResponderState) :=
+    (G : GroupDescription.{0})
+    (st : ResponderState G) :
+    PMF (ActivationResult SMCEasyUCPayload (ResponderState G)) :=
   match st.pending_outgoing with
   | some env =>
       PMF.pure {
@@ -383,10 +298,7 @@ noncomputable def responder_resume
       | some peer_share =>
           (match st.secret? with
             | some secret => PMF.pure secret
-            | none =>
-                match st.group? with
-                | some G => sample_dh_secret_in_group G
-                | none => sample_dh_secret gen st.sec_param).bind fun secret =>
+            | none => sample_dh_secret G).bind fun secret =>
             let shared_key := derive_key_from_secret secret peer_share
             PMF.pure {
               state := {
@@ -409,9 +321,9 @@ noncomputable def responder_resume
             }
 
 noncomputable def initiator_program
-    (gen : GroupGenerator) : MachineProgram SMCEasyUCPayload Unit where
-  LocalState := InitiatorState
-  init := initiator_init
+    (G : GroupDescription.{0}) : MachineProgram SMCEasyUCPayload Unit where
+  LocalState := InitiatorState G
+  init := initiator_init G
   activate := fun st incoming? =>
     let st' :=
       match incoming? with
@@ -436,10 +348,7 @@ noncomputable def initiator_program
     | some .send_first =>
         (match st'.secret? with
           | some secret => PMF.pure secret
-          | none =>
-              match st'.group? with
-              | some G => sample_dh_secret_in_group G
-              | none => sample_dh_secret gen st'.sec_param).bind fun secret =>
+          | none => sample_dh_secret G).bind fun secret =>
           PMF.pure {
             state := {
               st' with
@@ -475,9 +384,9 @@ noncomputable def initiator_program
   output := fun _ => ()
 
 noncomputable def responder_program
-    (gen : GroupGenerator) : MachineProgram SMCEasyUCPayload Unit where
-  LocalState := ResponderState
-  init := responder_init
+    (G : GroupDescription.{0}) : MachineProgram SMCEasyUCPayload Unit where
+  LocalState := ResponderState G
+  init := responder_init G
   activate := fun st incoming? =>
     let st' :=
       match incoming? with
@@ -505,10 +414,7 @@ noncomputable def responder_program
         | some peer_share =>
             (match st'.secret? with
               | some secret => PMF.pure secret
-              | none =>
-                  match st'.group? with
-                  | some G => sample_dh_secret_in_group G
-                  | none => sample_dh_secret gen st'.sec_param).bind fun secret =>
+              | none => sample_dh_secret G).bind fun secret =>
               let shared_key := derive_key_from_secret secret peer_share
               PMF.pure {
                 state := {
@@ -538,7 +444,7 @@ DHKE 这一步的理想 KE 功能机。
 Dummy party ids 仍然是两个 KE party；external identities 是它们在外层 SMC
 协议中的 caller，也就是 `smc_sender_id` 与 `smc_receiver_id`。
 -/
-noncomputable def ideal_ke_ids (gen : GroupGenerator) : KEIds where
+noncomputable def ideal_ke_ids (G : GroupDescription.{0}) : KEIds where
   initiator_id := ke_sender_id
   responder_id := ke_receiver_id
   functionality_id := ideal_ke_id
@@ -558,12 +464,12 @@ noncomputable def ideal_ke_ids (gen : GroupGenerator) : KEIds where
     ⟨smc_receiver_ne_ke_sender, smc_receiver_ne_ke_receiver,
       smc_receiver_ne_ideal_ke, smc_receiver_separated.1,
       smc_receiver_separated.2⟩
-  sample_key_material := sample_ideal_ke_key gen
+  sample_key_material := sample_ideal_ke_key G
 
 /-- DHKE 子证明的目标理想功能。 -/
 noncomputable def ideal_ke_functionality
-    (gen : GroupGenerator) :
+    (G : GroupDescription.{0}) :
     IdealFunctionality SMCEasyUCPayload :=
-  IdealKE (ideal_ke_ids gen)
+  IdealKE (ideal_ke_ids G)
 
 end LeanCryptoProtocols.CaseStudy.SMCEasyUC.DHKE

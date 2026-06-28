@@ -110,7 +110,7 @@ noncomputable def smc_receiver_machine : Machine SMCEasyUCPayload Unit where
       · rfl
 
 noncomputable def ke_sender_machine
-    (gen : GroupGenerator) : Machine SMCEasyUCPayload Unit where
+    (gen : GroupDescription.{0}) : Machine SMCEasyUCPayload Unit where
   id := ke_sender_id
   communication_set :=
     { ke_sender_to_smc_sender_port
@@ -158,7 +158,7 @@ noncomputable def ke_sender_machine
       · rfl
 
 noncomputable def ke_receiver_machine
-    (gen : GroupGenerator) : Machine SMCEasyUCPayload Unit where
+    (gen : GroupDescription.{0}) : Machine SMCEasyUCPayload Unit where
   id := ke_receiver_id
   communication_set :=
     { ke_receiver_to_smc_receiver_port
@@ -220,13 +220,13 @@ private theorem forw_has_subroutine_to_receiver
   simp [Functionality.ForwImpl.communication_set]
 
 private theorem ke_sender_is_subroutine_of_smc_sender
-    (gen : GroupGenerator) :
+    (gen : GroupDescription.{0}) :
     is_subroutine_of_id (ke_sender_machine gen) smc_sender_id := by
   refine ⟨ke_sender_to_smc_sender_port, ?_, rfl, rfl⟩
   simp [ke_sender_machine]
 
 private theorem ke_receiver_is_subroutine_of_smc_receiver
-    (gen : GroupGenerator) :
+    (gen : GroupDescription.{0}) :
     is_subroutine_of_id (ke_receiver_machine gen) smc_receiver_id := by
   refine ⟨ke_receiver_to_smc_receiver_port, ?_, rfl, rfl⟩
   simp [ke_receiver_machine]
@@ -234,7 +234,7 @@ private theorem ke_receiver_is_subroutine_of_smc_receiver
 /-! ## Protocol -/
 
 noncomputable def real_smc_machines
-    (gen : GroupGenerator) : List (AnyMachine SMCEasyUCPayload) :=
+    (gen : GroupDescription.{0}) : List (AnyMachine SMCEasyUCPayload) :=
   [ ⟨Unit, smc_sender_machine⟩
   , ⟨Unit, smc_receiver_machine⟩
   , ⟨Unit, ke_sender_machine gen⟩
@@ -245,7 +245,7 @@ noncomputable def real_smc_machines
   ]
 
 theorem real_smc_unique_ids
-    (gen : GroupGenerator) :
+    (gen : GroupDescription.{0}) :
     (machine_ids (real_smc_machines gen)).Nodup := by
   change
     [ smc_sender_id
@@ -259,7 +259,7 @@ theorem real_smc_unique_ids
   native_decide
 
 theorem real_smc_caller_has_matching_subroutine
-    (gen : GroupGenerator) :
+    (gen : GroupDescription.{0}) :
   ∀ m ∈ real_smc_machines gen, ∀ mid : MachineId,
     is_caller_of_id m.2 mid →
       ∃ m' ∈ real_smc_machines gen,
@@ -355,7 +355,7 @@ theorem real_smc_caller_has_matching_subroutine
     rcases hp with rfl | rfl | rfl <;> cases h_label
 
 theorem real_smc_subroutine_has_matching_caller
-    (gen : GroupGenerator) :
+    (gen : GroupDescription.{0}) :
   ∀ m ∈ real_smc_machines gen, ∀ mid : MachineId,
     is_subroutine_of_id m.2 mid →
       mid ∈ machine_ids (real_smc_machines gen) →
@@ -489,19 +489,19 @@ theorem real_smc_subroutine_has_matching_caller
     · cases h_label
 
 theorem real_smc_env_separated
-    (gen : GroupGenerator) :
+    (gen : GroupDescription.{0}) :
     env_id ∉ machine_ids (real_smc_machines gen) := by
   change env_id ∉ machine_id_list
   native_decide
 
 theorem real_smc_adv_separated
-    (gen : GroupGenerator) :
+    (gen : GroupDescription.{0}) :
     adv_id ∉ machine_ids (real_smc_machines gen) := by
   change adv_id ∉ machine_id_list
   native_decide
 
 theorem real_smc_no_direct_environment_communication
-    (gen : GroupGenerator) :
+    (gen : GroupDescription.{0}) :
     ∀ m ∈ real_smc_machines gen, ∀ p ∈ m.2.communication_set,
       p.dest ≠ env_id := by
   intro m hm p hp
@@ -531,7 +531,7 @@ theorem real_smc_no_direct_environment_communication
 
 /-- 审计约束：real-world 中显式连向 adversary 的 backdoor 只来自三个 `Forw` functionality。 -/
 theorem adversary_backdoor_targets_are_forw
-    (gen : GroupGenerator) :
+    (gen : GroupDescription.{0}) :
     ∀ m ∈ real_smc_machines gen, ∀ p ∈ m.2.communication_set,
       p.dest = adv_id → AnyMachine.id m ∈ forw_control_targets := by
   intro m hm p hp h_dest
@@ -645,7 +645,7 @@ theorem adversary_backdoor_targets_are_forw
 
 /-- 审计入口暴露的 real SMC protocol：2 个 main machines 与 5 个 internal machines。 -/
 noncomputable def real_smc_protocol
-    (gen : GroupGenerator) : Protocol SMCEasyUCPayload :=
+    (gen : GroupDescription.{0}) : Protocol SMCEasyUCPayload :=
   { machines := real_smc_machines gen
     unique_ids := real_smc_unique_ids gen
     caller_has_matching_subroutine :=
@@ -658,7 +658,7 @@ noncomputable def real_smc_protocol
       real_smc_no_direct_environment_communication gen }
 /-- 两个 main machines 正是 SMC sender / receiver。 -/
 theorem smc_sender_is_main
-    (gen : GroupGenerator) :
+    (gen : GroupDescription.{0}) :
     (real_smc_protocol gen).is_main_machine smc_sender_id := by
   refine ⟨⟨Unit, smc_sender_machine⟩, ?_, rfl, ?_⟩
   · simp [real_smc_protocol, real_smc_machines]
@@ -670,7 +670,7 @@ theorem smc_sender_is_main
       native_decide
 
 theorem smc_receiver_is_main
-    (gen : GroupGenerator) :
+    (gen : GroupDescription.{0}) :
     (real_smc_protocol gen).is_main_machine smc_receiver_id := by
   refine ⟨⟨Unit, smc_receiver_machine⟩, ?_, rfl, ?_⟩
   · simp [real_smc_protocol, real_smc_machines]

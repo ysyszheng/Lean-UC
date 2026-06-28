@@ -25,10 +25,10 @@ open LeanCryptoProtocols.Assumptions
 
 /-- Certificate 中的 UC 安全目标陈述。证明将在后续安全证明文件中完成。 -/
 def smc_uc_realizes
-    (gen : PPTGroupGenerator) : Prop :=
-  ppt_ddh_assumption gen →
+    (G : GroupDescription.{0}) : Prop :=
+  ddh_assumption G →
     UCRealizesComputational
-      (real_smc_protocol gen.run)
+      (real_smc_protocol G)
       ideal_smc_functionality
 
 /--
@@ -38,11 +38,11 @@ def smc_uc_realizes
 该目标目前只是审计入口中的 theorem statement，完整证明将在后续文件中完成。
 -/
 def smc_uc_realizes_with_fixed_simulator
-    (gen : PPTGroupGenerator) : Prop :=
-  ppt_ddh_assumption gen →
+    (G : GroupDescription.{0}) : Prop :=
+  ddh_assumption G →
     ∀ A : Adversary.{0, wA} SMCEasyUCPayload, PPT A →
       ∀ E : Environment.{0, wE} SMCEasyUCPayload, PPT E →
-        ∀ real_setup : ExecutionSetup (real_smc_protocol gen.run) A E,
+        ∀ real_setup : ExecutionSetup (real_smc_protocol G) A E,
           ∀ ideal_setup :
               ExecutionSetup
                 (mk_ideal_protocol ideal_smc_functionality).protocol

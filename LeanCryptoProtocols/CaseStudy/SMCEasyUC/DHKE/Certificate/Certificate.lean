@@ -19,10 +19,10 @@ open LeanCryptoProtocols.Assumptions
 
 /-- DHKE 子证明的 UC-realize 目标陈述。 -/
 def uc_realizes
-    (gen : PPTGroupGenerator) : Prop :=
-  ppt_ddh_assumption gen →
+    (G : GroupDescription.{0}) : Prop :=
+  ddh_assumption G →
     UCRealizesComputational
-      (real_protocol gen.run)
-      (ideal_ke_functionality gen.run)
+      (real_protocol G)
+      (ideal_ke_functionality G)
 
 end LeanCryptoProtocols.CaseStudy.SMCEasyUC.DHKE
