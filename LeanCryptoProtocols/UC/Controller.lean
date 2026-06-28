@@ -305,14 +305,14 @@ inductive ExitStatus where
   | budget_exceeded
   deriving Repr, DecidableEq
 
-/-- 使用 protocol 提供的初始 machine states 构造 controller 状态。 -/
-def initial_state_with_protocol_states {Payload : Type u} {π : Protocol Payload}
+/-- 按各 protocol machine 的 `program.init n` 构造 controller 初始状态。 -/
+def initial_state {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
-    (setup : ExecutionSetup π A E) (n : ℕ)
-    (protocol_states : List (AnyMachineState Payload)) : ControllerState setup where
+    (setup : ExecutionSetup π A E) (n : ℕ) : ControllerState setup where
   env_state := E.machine.program.init n
   adv_state := A.machine.program.init n
-  protocol_states := protocol_states.map ProtocolMachineState.of_any_machine_state
+  protocol_states :=
+    (default_machine_states π.machines n).map ProtocolMachineState.of_any_machine_state
   active_id := env_id
 
 /-- 查找某个 protocol machine 的当前运行时状态。 -/
@@ -481,20 +481,18 @@ noncomputable def exec {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
     (setup : ExecutionSetup π A E) : Ensemble Bool :=
   fun n =>
-    (π.initial_states n).bind fun protocol_states =>
-      (run_steps setup LeanCryptoProtocols.max_controller_steps
-          (initial_state_with_protocol_states setup n protocol_states)).bind fun st =>
-        PMF.pure (environment_output st)
+    (run_steps setup LeanCryptoProtocols.max_controller_steps
+        (initial_state setup n)).bind fun st =>
+      PMF.pure (environment_output st)
 
 /-- Controller 输出及退出原因。用于可执行 harness 检查预算耗尽。 -/
 noncomputable def exec_with_status {Payload : Type u} {π : Protocol Payload}
     {A : Adversary Payload} {E : Environment Payload}
     (setup : ExecutionSetup π A E) : Ensemble (Bool × ExitStatus) :=
   fun n =>
-    (π.initial_states n).bind fun protocol_states =>
-      (run_steps_with_status setup LeanCryptoProtocols.max_controller_steps
-          (initial_state_with_protocol_states setup n protocol_states)).bind fun result =>
-        PMF.pure (environment_output result.1, result.2)
+    (run_steps_with_status setup LeanCryptoProtocols.max_controller_steps
+        (initial_state setup n)).bind fun result =>
+      PMF.pure (environment_output result.1, result.2)
 
 /-- Controller 预算耗尽时给命令行 wrapper 使用的提示。 -/
 def budget_exceeded_warning : String :=

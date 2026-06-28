@@ -49,10 +49,6 @@ def default_shared_key : SharedKey := ⟨0⟩
 def key_bit (k : SharedKey) : Bool :=
   k.value % 2 = 1
 
-/-- 用于 toy model 的抽象共享密钥派生接口。 -/
-def derive_shared_key (g₁ g₂ : GroupElement) : SharedKey :=
-  ⟨g₁.value + g₂.value + 1⟩
-
 /-- 当前 case study 中统一使用的抽象加密。 -/
 def enc (k : SharedKey) (m : Plaintext) : Ciphertext :=
   ⟨decide (m.value ≠ key_bit k)⟩

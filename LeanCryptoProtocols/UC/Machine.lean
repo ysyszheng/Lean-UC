@@ -216,8 +216,6 @@ protocol 的静态外形。
 -/
 structure Protocol (Payload : Type u) where
   machines : List (AnyMachine Payload)
-  initial_states : ℕ → PMF (List (AnyMachineState Payload)) :=
-    fun n => PMF.pure (default_machine_states machines n)
   unique_ids : (machine_ids machines).Nodup
   caller_has_matching_subroutine :
     ∀ m ∈ machines, ∀ mid : MachineId,
