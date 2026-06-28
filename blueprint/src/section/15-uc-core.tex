@@ -287,19 +287,19 @@ The record proves the following static obligations:
   &\IdList(\Prot)\text{ has no duplicate},\\
   &\Env\notin\Ids(\Prot),
    \qquad \Adv\notin\Ids(\Prot),\\
-  &\forall\mu\in\Prot,\;\forall j\in\Id,\quad
+  &\forall\mu\in\Prot.\mathsf{machines},\;\forall j\in\Id,\quad
     \mu\leadsto_{\mathsf{in}}j
     \Longrightarrow
-    \exists\nu\in\Prot,\;
+    \exists\nu\in\Prot.\mathsf{machines},\;
       \nu.\mathsf{id}=j
       \land\nu\leadsto_{\mathsf{sub}}\mu.\mathsf{id},\\
-  &\forall\mu\in\Prot,\;\forall j\in\Id,\quad
+  &\forall\mu\in\Prot.\mathsf{machines},\;\forall j\in\Id,\quad
     \mu\leadsto_{\mathsf{sub}}j\land j\in\Ids(\Prot)
     \Longrightarrow
-    \exists\nu\in\Prot,\;
+    \exists\nu\in\Prot.\mathsf{machines},\;
       \nu.\mathsf{id}=j
       \land\nu\leadsto_{\mathsf{in}}\mu.\mathsf{id},\\
-  &\forall\mu\in\Prot,\;\forall p\in\Gamma_\mu,
+  &\forall\mu\in\Prot.\mathsf{machines},\;\forall p\in\Gamma_\mu,
     \quad p.\mathsf{dst}\ne\Env.
 \end{aligned}
 \]
@@ -308,7 +308,7 @@ start of an execution every listed machine is initialized by its own
 deterministic \(\mathsf{init}(n)\).
 \end{definition}
 
-\begin{definition}[Public-setup convention]
+\begin{remark}[Public-setup convention]
 \label{rem:uc-public-setup}
 \uses{def:uc-machine-program,def:uc-protocol}
 The core has no first-class random public-setup field.  Fixed public data, such
@@ -318,7 +318,7 @@ private randomness is sampled by machine activations.  A randomized common
 setup, such as a CRS sampled once and shared by multiple machines, must be
 modeled explicitly by a setup machine or ideal functionality if it is to be
 part of the execution semantics.
-\end{definition}
+\end{remark}
 
 \begin{definition}[Main, internal, and external identities]
 \label{def:uc-main-internal-external}
@@ -327,7 +327,7 @@ part of the execution semantics.
 \leanok
 An identity \(x\) is external to a protocol machine \(\mu\) when
 \[
-  \mu\in\Prot,
+  \mu\in\Prot.\mathsf{machines},
   \qquad
   \mu\leadsto_{\mathsf{sub}}x,
   \qquad
@@ -338,7 +338,7 @@ Write \(x\in\Ext_\Prot(\mu)\) for this relation.  For a machine identity
 \[
   \Ext_\Prot(j):=
   \{x\in\Id\mid
-    \exists\mu\in\Prot,\;
+    \exists\mu\in\Prot.\mathsf{machines},\;
       \mu.\mathsf{id}=j\land x\in\Ext_\Prot(\mu)\}.
 \]
 Identity uniqueness ensures that this set belongs to at most one listed
@@ -411,7 +411,7 @@ proof that
 There are no other setup fields.  In particular, the adversary object does not
 store its own corruption set.  The current constraint permits any listed
 protocol machine, including an internal machine, to occur in \(\Corr_\sigma\);
-it is not restricted to main-machine identities.
+it is not restricted to main-machine identities. \redcomment{TBD}
 \end{definition}
 
 \begin{definition}[Runtime communication sets]
@@ -477,7 +477,7 @@ For an envelope \(e=(p,m)\) emitted by \(E\), define
 The second branch lets the environment choose which valid external identity is
 calling a main machine.  This logical caller identity is the only source value
 that the controller preserves rather than replacing by the active machine
-identity.
+identity, as defined in Definition~\ref{def:uc-authenticated-message}.
 \end{definition}
 
 \begin{definition}[Corruption-instruction validity]
@@ -590,7 +590,7 @@ the initial state is
   s_E&:=E.\mathsf{init}(n),
   &s_A&:=A.\mathsf{init}(n),\\
   \vec{s}_{\Prot}&:=
-    [\mu.\mathsf{init}(n)\mid\mu\in\Prot],
+    [\mu.\mathsf{init}(n)\mid\mu\in\Prot.\mathsf{machines}],
   &i&:=\Env.
 \end{aligned}
 \]
@@ -681,14 +681,14 @@ or the fixed budget was exhausted.  The ordinary security ensemble returns the
 environment output in either case.
 \end{definition}
 
-\begin{definition}[Execution-model boundary]
+\begin{remark}[Execution-model boundary]
 \label{rem:uc-execution-boundaries}
 \uses{def:uc-execution-ensemble}
 The controller budget is a fixed project constant rather than an explicit
 polynomial in \(n\).  The current execution model also has no auxiliary-input
 parameter.  These are deliberate boundaries of the implemented restricted
 model, not consequences of the general UC framework.
-\end{definition}
+\end{remark}
 
 \subsection{Ideal Functionalities and Generated Ideal Protocols}
 
@@ -787,7 +787,7 @@ Thus the environment-facing parties are precisely the generated dummies, and
 the only internal machine is the ideal functionality.
 \end{definition}
 
-\begin{definition}[Simulator access in the generated ideal world]
+\begin{remark}[Simulator access in the generated ideal world]
 \label{rem:uc-ideal-simulator-access}
 \uses{def:uc-runtime-overlay,def:uc-corruption-validity,def:uc-dummy-party,def:uc-ideal-protocol}
 The runtime overlay creates backdoor routes between the simulator and every
@@ -801,7 +801,7 @@ Because the current setup constraint ranges over all ideal-protocol identities,
 it also permits the functionality identity itself to occur in the corruption
 set, although party-corruption theorems will normally choose only dummy-party
 identities.
-\end{definition}
+\end{remark}
 
 \subsection{Indistinguishability}
 
@@ -824,7 +824,7 @@ The predicate \(\PPTM(x)\) is the project's abstract polynomial-time
 interface.  It is used for adversaries, simulators, environments,
 distinguishers, reductions, and samplers.  The current axioms provide closure
 under equality, deterministic composition, constants, pure probabilistic
-return, and probabilistic bind.  They do not define an operational cost model.
+return, and probabilistic bind.  They do not define an operational cost model. \redcomment{TBD}
 \end{definition}
 
 \begin{definition}[Negligible functions]
@@ -955,7 +955,7 @@ computational indistinguishability according to \(\ell\).
 \leanok
 For a challenge sample \(x\), suppose a reduction constructs a protocol
 \(\Prot_x\) and setup \(\sigma_x\), then returns the controller's environment
-bit.  The current complexity interface postulates
+bit. \redcomment{check.} The current complexity interface postulates
 \[
   \PPTM(A)\land\PPTM(E)
   \Longrightarrow
@@ -1032,7 +1032,7 @@ its machine program may store and black-box invoke that adversary.  The standard
 no-corruption aliases instantiate \(\Corr=\varnothing\).
 \end{definition}
 
-\begin{definition}[Legality of the fixed corruption pattern]
+\begin{remark}[Legality of the fixed corruption pattern]
 \label{rem:uc-corruption-pattern-legality}
 \uses{def:uc-execution-setup,def:uc-emulation}
 An execution setup with corruption pattern \(\Corr\) exists only if
@@ -1042,7 +1042,7 @@ statement at \(\Corr\) has nonvacuous real and ideal setup instances only when
 \(\mathsf{UCEmulatesAt}\) declaration does not state these two subset premises
 at its outermost level; instead, it quantifies over setup records and uses
 implications equating their stored patterns to \(\Corr\).
-\end{definition}
+\end{remark}
 
 \begin{definition}[UC realization]
 \label{def:uc-realization}
@@ -1063,7 +1063,7 @@ parties; all effective corrupted-party behavior in the ideal world is defined
 by the program of \(F\).
 \end{definition}
 
-\begin{definition}[Computational-model boundary]
+\begin{remark}[Computational-model boundary]
 \label{rem:uc-computational-boundary}
 \uses{def:uc-ppt,def:uc-controller-ppt,def:uc-emulation}
 Computational security currently assumes the abstract \(\PPTM\) predicate and
@@ -1071,7 +1071,7 @@ its closure axioms.  It does not yet derive polynomial running time from the
 machine programs, nor does it require protocol machines themselves to carry
 PPT proofs.  Combined with the fixed controller budget, this is an explicit
 abstraction boundary that later cryptographic reductions must respect.
-\end{definition}
+\end{remark}
 
 \subsection{Audit}
 
