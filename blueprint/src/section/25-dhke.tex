@@ -1,6 +1,595 @@
 % !TeX root = ../print.tex
-\section{Case Study 1: Diffie-Hellman Key Exchange}
+\section{Case Study 1: Diffie--Hellman Key Exchange}
 
-No corruption.
+This case study specifies a one-session, two-party Diffie--Hellman key
+exchange in the no-corruption setting.  The communication pattern follows the
+two authenticated forwarders of the EasyUC case study
+\cite{canettistoughtonvaria2019easyuc}, but all machines, ports, messages, and
+executions below use the UC Core model of Section~2.  The definitions in this
+section are the specification for a future Lean implementation; none is
+claimed to be implemented yet.
 
-\redcomment{TODO: to be completed.}
+\subsection{Real and Ideal Key Exchange}
+
+\begin{definition}[Deterministic public group family]
+\label{def:dhke-group-family}
+\uses{rem:uc-public-setup,def:uc-message,def:uc-ppt}
+\notready
+A DH group family \(\mathfrak G\) deterministically associates to every
+security parameter \(n\in\Nat\) a description
+\[
+  \mathfrak G(n)=(\mathbb G_n,q_n,g_n),
+\]
+where \(q_n\) is prime, \(\mathbb G_n\) is a cyclic group of order \(q_n\),
+and \(g_n\) is a generator.  Exponents range over
+\(\mathbb Z_{q_n}\); write \(a\getsr\mathbb Z_{q_n}\) for uniform sampling.
+
+The message payload type must not depend on \(n\).  We therefore fix a wire
+type \(\mathcal W\) and deterministic algorithms
+\[
+\begin{aligned}
+  \mathsf{enc}_n &: \mathbb G_n\longrightarrow\mathcal W,\\
+  \mathsf{dec}_n &: \mathcal W\longrightarrow
+    \mathsf{Option}(\mathbb G_n).
+\end{aligned}
+\]
+They satisfy, for every \(U\in\mathbb G_n\),
+\[
+  \mathsf{dec}_n(\mathsf{enc}_n(U))=\mathsf{some}(U),
+\]
+and \(\mathsf{enc}_n\) is injective.  Decoding rejects every wire value that
+is not a canonical encoding of an element of \(\mathbb G_n\).
+
+The family description, uniform exponent sampler, encoding, decoding, group
+operations, and exponentiation are required to satisfy the project's abstract
+PPT predicate.  The family is a deterministic parameter of the protocol;
+there is no randomized group-generation step in an execution.  Each party's
+\(\mathsf{init}(n)\) stores the security parameter needed to select
+\(\mathfrak G(n)\).
+\end{definition}
+
+\begin{definition}[DHKE identities]
+\label{def:dhke-identities}
+\uses{def:uc-machine-identities,def:uc-protocol,def:uc-ideal-functionality}
+\notready
+Fix protocol-machine identities
+\[
+  I,\quad R,\quad F_{IR},\quad F_{RI}\in\Id,
+\]
+where \(I\) and \(R\) denote the initiator and responder, and \(F_{IR}\) and
+\(F_{RI}\) denote the two directional authenticated forwarders.  Fix external
+identities \(x_I,x_R\in\Id\), and reserve a distinct identity
+\(F_{\mathsf{KE}}\) for the ideal functionality.
+
+The identities
+\[
+  I,R,F_{IR},F_{RI},F_{\mathsf{KE}},x_I,x_R,\Env,\Adv
+\]
+are pairwise distinct.  In particular, the external identities are not
+protocol-machine identities and no case-study machine uses a reserved UC Core
+identity.
+\end{definition}
+
+\begin{definition}[DHKE payloads]
+\label{def:dhke-payload}
+\uses{def:dhke-group-family,def:uc-message,def:uc-message-instruction}
+\notready
+The common payload type \(\mathcal M_{\mathsf{DH}}\) contains the following
+constructors, where \(Z\in\mathcal W\):
+\[
+\begin{array}{lll}
+  \mathsf{start},
+  &\mathsf{continue},
+  &\mathsf{key}(Z),\\[0.2em]
+  \mathsf{submit}_1(Z),
+  &\mathsf{observe}_1(Z),
+  &\mathsf{release}_1,\\
+  \mathsf{deliver}_1(Z),
+  &\mathsf{schedule}_1,
+  &\\[0.2em]
+  \mathsf{submit}_2(Z),
+  &\mathsf{observe}_2(Z),
+  &\mathsf{release}_2,\\
+  \mathsf{deliver}_2(Z),
+  &\mathsf{schedule}_2.
+\end{array}
+\]
+The two schedule constructors carry only the fixed session and direction
+metadata implicit in this one-session protocol.  In particular, they contain
+no wire value.
+
+All messages constructed by real protocol machines use instruction
+\(\mathsf{plain}\).  The following label discipline is part of the machine
+specification:
+\[
+\begin{array}{c|c}
+  \text{payload} & \text{message label}\\ \hline
+  \mathsf{start},\mathsf{continue},\mathsf{submit}_1(Z),
+    \mathsf{submit}_2(Z) & \mathsf{input}\\
+  \mathsf{key}(Z),\mathsf{deliver}_1(Z),
+    \mathsf{deliver}_2(Z) & \mathsf{subout}\\
+  \mathsf{observe}_1(Z),\mathsf{release}_1,
+    \mathsf{observe}_2(Z),\mathsf{release}_2,
+    \mathsf{schedule}_1,\mathsf{schedule}_2 & \mathsf{backdoor}.
+\end{array}
+\]
+In the generated ideal protocol, a dummy forwarding an environment input
+replaces \(\mathsf{plain}\) by
+\[
+  \mathsf{dummyCaller}(x),
+  \qquad x\in\{x_I,x_R\}.
+\]
+When returning a key through a dummy, the ideal functionality instead uses
+\[
+  \mathsf{dummyDestination}(x),
+  \qquad x\in\{x_I,x_R\}.
+\]
+\end{definition}
+
+\begin{definition}[Real-protocol communication sets]
+\label{def:dhke-communication-sets}
+\uses{def:dhke-identities,def:dhke-payload,def:uc-comm-port,def:uc-port-relations,def:uc-runtime-overlay}
+\notready
+The four real machines have the static communication sets
+\[
+\begin{aligned}
+  \Gamma_I={}&
+    \{(I,F_{IR},\mathsf{input}),
+      (I,F_{RI},\mathsf{input}),
+      (I,x_I,\mathsf{subout})\},\\
+  \Gamma_R={}&
+    \{(R,F_{IR},\mathsf{input}),
+      (R,F_{RI},\mathsf{input}),
+      (R,x_R,\mathsf{subout})\},\\
+  \Gamma_{F_{IR}}={}&
+    \{(F_{IR},I,\mathsf{subout}),
+      (F_{IR},R,\mathsf{subout})\},\\
+  \Gamma_{F_{RI}}={}&
+    \{(F_{RI},I,\mathsf{subout}),
+      (F_{RI},R,\mathsf{subout})\}.
+\end{aligned}
+\]
+The actual successful execution uses only
+\[
+  I\longrightarrow F_{IR}\longrightarrow R,
+  \qquad
+  R\longrightarrow F_{RI}\longrightarrow I.
+\]
+The additional matching input and subroutine-output ports are present because
+the UC Core requires every listed caller edge to have a matching subroutine
+edge, and conversely.  The programs below reject traffic on the unused
+directions.
+
+No static set contains a backdoor port.  The controller's runtime overlay adds
+the backdoor ports between \(\Adv\) and every protocol machine.  This permits
+ordinary adversarial scheduling messages without granting corruption, which
+is fixed to the empty set in this case study.
+\end{definition}
+
+\begin{definition}[Initiator program]
+\label{def:dhke-initiator-program}
+\uses{def:dhke-group-family,def:dhke-payload,def:dhke-communication-sets,def:uc-machine-program,def:uc-activation-result,def:uc-authenticated-message}
+\notready
+The initiator has local states
+\[
+  \mathsf{IInit}(n),
+  \qquad
+  \mathsf{IWait}(n,a),
+  \qquad
+  \mathsf{IDone}(n),
+\]
+and initializes to \(\mathsf{IInit}(n)\).  Its accepted transitions are:
+\begin{enumerate}
+\item In \(\mathsf{IInit}(n)\), accept exactly an input-labelled, plain
+      message with authenticated source \(x_I\) and payload
+      \(\mathsf{start}\).  Sample
+      \(a\getsr\mathbb Z_{q_n}\), let
+      \(X=\mathsf{enc}_n(g_n^a)\), move to
+      \(\mathsf{IWait}(n,a)\), and emit an input envelope through
+      \((I,F_{IR},\mathsf{input})\) carrying
+      \(\mathsf{submit}_1(X)\).
+\item In \(\mathsf{IWait}(n,a)\), accept exactly a subroutine-output-labelled,
+      plain message with authenticated source \(F_{RI}\) and payload
+      \(\mathsf{deliver}_2(Y)\).  Require
+      \(\mathsf{dec}_n(Y)=\mathsf{some}(V)\).  Move to
+      \(\mathsf{IDone}(n)\) and emit through
+      \((I,x_I,\mathsf{subout})\) the payload
+      \[
+        \mathsf{key}\bigl(\mathsf{enc}_n(V^a)\bigr).
+      \]
+\end{enumerate}
+Every other input, including \(\mathsf{none}\), leaves the state unchanged and
+emits no envelope.  The program's halt flag is always false and its local
+output is the unit value; the established key is returned only by message.
+\end{definition}
+
+\begin{definition}[Responder program]
+\label{def:dhke-responder-program}
+\uses{def:dhke-group-family,def:dhke-payload,def:dhke-communication-sets,def:uc-machine-program,def:uc-activation-result,def:uc-authenticated-message}
+\notready
+The responder has local states
+\[
+  \mathsf{RInit}(n),
+  \qquad
+  \mathsf{RWait}(n,b),
+  \qquad
+  \mathsf{RDone}(n),
+\]
+and initializes to \(\mathsf{RInit}(n)\).  Its accepted transitions are:
+\begin{enumerate}
+\item In \(\mathsf{RInit}(n)\), accept exactly a subroutine-output-labelled,
+      plain message with authenticated source \(F_{IR}\) and payload
+      \(\mathsf{deliver}_1(X)\).  Require
+      \(\mathsf{dec}_n(X)=\mathsf{some}(U)\).  Sample
+      \(b\getsr\mathbb Z_{q_n}\), move to \(\mathsf{RWait}(n,b)\), and emit
+      through \((R,x_R,\mathsf{subout})\) the payload
+      \[
+        \mathsf{key}\bigl(\mathsf{enc}_n(U^b)\bigr).
+      \]
+\item In \(\mathsf{RWait}(n,b)\), accept exactly an input-labelled, plain
+      message with authenticated source \(x_R\) and payload
+      \(\mathsf{continue}\).  Let
+      \(Y=\mathsf{enc}_n(g_n^b)\), move to \(\mathsf{RDone}(n)\), and emit an
+      input envelope through \((R,F_{RI},\mathsf{input})\) carrying
+      \(\mathsf{submit}_2(Y)\).
+\end{enumerate}
+Every other input, including \(\mathsf{none}\), leaves the state unchanged and
+emits no envelope.  Its halt flag is always false and its local output is unit.
+\end{definition}
+
+\begin{definition}[Authenticated forwarding programs]
+\label{def:dhke-forwarder-programs}
+\uses{def:dhke-group-family,def:dhke-payload,def:dhke-communication-sets,def:uc-machine-program,def:uc-runtime-overlay,def:uc-authenticated-message}
+\notready
+Each forwarder is a one-use authenticated channel with states
+\[
+  \mathsf{FInit}(n),
+  \qquad
+  \mathsf{FPending}(n,Z),
+  \qquad
+  \mathsf{FDone}(n).
+\]
+The first forwarder \(F_{IR}\) has the following transitions:
+\begin{enumerate}
+\item In \(\mathsf{FInit}(n)\), accept exactly an input-labelled, plain
+      message from authenticated source \(I\) carrying
+      \(\mathsf{submit}_1(X)\), with \(\mathsf{dec}_n(X)\ne\mathsf{none}\).
+      Store the exact wire value \(X\), move to
+      \(\mathsf{FPending}(n,X)\), and emit a backdoor message to \(\Adv\)
+      carrying
+      \[
+        \mathsf{observe}_1(X).
+      \]
+\item In \(\mathsf{FPending}(n,X)\), accept exactly a backdoor-labelled,
+      plain message from authenticated source \(\Adv\) carrying
+      \(\mathsf{release}_1\).  Move to \(\mathsf{FDone}(n)\) and emit through
+      \((F_{IR},R,\mathsf{subout})\) the payload
+      \(\mathsf{deliver}_1(X)\).
+\end{enumerate}
+The second forwarder \(F_{RI}\) is the exact directional analogue:
+\[
+\begin{aligned}
+  \mathsf{submit}_2(Y)
+  &\longmapsto \mathsf{observe}_2(Y),\\
+  \mathsf{release}_2
+  &\longmapsto \mathsf{deliver}_2(Y)\text{ to }I.
+\end{aligned}
+\]
+It accepts the submission only from \(R\) and the release only from \(\Adv\).
+
+All other inputs and \(\mathsf{none}\) leave the corresponding state unchanged
+and emit no envelope.  Both halt flags are always false and both local outputs
+are unit.  Crucially, each observation contains the exact public share that was
+submitted.  A release message contains no replacement value, and delivery uses
+the stored wire value.  Thus the adversary learns \(X\) and \(Y\) and may
+withhold either release, but cannot modify, replace, or resample either share.
+\end{definition}
+
+\begin{definition}[Real DHKE protocol]
+\label{def:dhke-real-protocol}
+\uses{def:dhke-identities,def:dhke-communication-sets,def:dhke-initiator-program,def:dhke-responder-program,def:dhke-forwarder-programs,def:uc-machine,def:uc-protocol,def:uc-main-internal-external}
+\notready
+Let \(\mu_I,\mu_R,\mu_{F_{IR}},\mu_{F_{RI}}\) be the machines obtained from
+the preceding programs, identities, and communication sets.  Define
+\[
+  \Pi_{\mathsf{DH}}^{\mathfrak G}.\mathsf{machines}
+  :=[\mu_I,\mu_R,\mu_{F_{IR}},\mu_{F_{RI}}].
+\]
+The identity assumptions prove uniqueness and reserved-identity separation.
+The paired ports prove both protocol matching conditions, and no listed port
+has destination \(\Env\).  Its identity and role sets are
+\[
+\begin{aligned}
+  \Ids(\Pi_{\mathsf{DH}}^{\mathfrak G})
+    &=\{I,R,F_{IR},F_{RI}\},\\
+  \Main(\Pi_{\mathsf{DH}}^{\mathfrak G})
+    &=\{I,R\},\\
+  \mathsf{Internal}(\Pi_{\mathsf{DH}}^{\mathfrak G})
+    &=\{F_{IR},F_{RI}\}.
+\end{aligned}
+\]
+The external-identity sets of the two main machines are exactly
+\(\{x_I\}\) and \(\{x_R\}\).
+\end{definition}
+
+\begin{definition}[Successful real execution path]
+\label{def:dhke-real-path}
+\uses{def:dhke-real-protocol,def:uc-run-activation,def:uc-authenticated-message}
+\notready
+For \(a,b\in\mathbb Z_{q_n}\), set
+\[
+  X:=\mathsf{enc}_n(g_n^a),
+  \qquad
+  Y:=\mathsf{enc}_n(g_n^b),
+  \qquad
+  K:=\mathsf{enc}_n(g_n^{ab}).
+\]
+Call a controller activation sequence a successful real execution when the
+environment supplies the two external inputs in the indicated order, the
+adversary releases both pending forwarders, and the projection of delivered
+authenticated messages to sender, receiver, and payload is exactly
+\[
+\begin{array}{rcl}
+  x_I\to I &:& \mathsf{start},\\
+  I\to F_{IR} &:& \mathsf{submit}_1(X),\\
+  F_{IR}\to\Adv &:& \mathsf{observe}_1(X),\\
+  \Adv\to F_{IR} &:& \mathsf{release}_1,\\
+  F_{IR}\to R &:& \mathsf{deliver}_1(X),\\
+  R\to x_R &:& \mathsf{key}(K),\\
+  x_R\to R &:& \mathsf{continue},\\
+  R\to F_{RI} &:& \mathsf{submit}_2(Y),\\
+  F_{RI}\to\Adv &:& \mathsf{observe}_2(Y),\\
+  \Adv\to F_{RI} &:& \mathsf{release}_2,\\
+  F_{RI}\to I &:& \mathsf{deliver}_2(Y),\\
+  I\to x_I &:& \mathsf{key}(K).
+\end{array}
+\]
+Here an arrow from or to an external identity denotes environment routing by
+the controller.  Equality of the two key outputs follows from
+\[
+  (g_n^a)^b=g_n^{ab}=g_n^{ba}=(g_n^b)^a.
+\]
+This is a functional-correctness statement for the fully released path, not a
+UC security proof.
+\end{definition}
+
+\begin{definition}[Ideal key-exchange functionality]
+\label{def:dhke-ideal-functionality}
+\uses{def:dhke-group-family,def:dhke-identities,def:dhke-payload,def:uc-ideal-functionality,def:uc-runtime-overlay,def:uc-authenticated-message}
+\notready
+The ideal functionality \(\mathcal F_{\mathsf{KE}}^{\mathfrak G}\) has
+\[
+\begin{aligned}
+  \mathsf{partyIds}&=[I,R],\\
+  \mathsf{externalIds}(I)&=\{x_I\},\\
+  \mathsf{externalIds}(R)&=\{x_R\},\\
+  \mathsf{functionalityId}&=F_{\mathsf{KE}}.
+\end{aligned}
+\]
+Its functionality machine has static communication set
+\[
+  \{(F_{\mathsf{KE}},I,\mathsf{subout}),
+    (F_{\mathsf{KE}},R,\mathsf{subout})\}.
+\]
+The runtime overlay supplies its two backdoor directions with the simulator.
+
+Its local states are
+\[
+  \mathsf{KInit}(n),\quad
+  \mathsf{KWaitFirst}(n),\quad
+  \mathsf{KWaitContinue}(n,K),\quad
+  \mathsf{KWaitSecond}(n,K),\quad
+  \mathsf{KDone}(n),
+\]
+and its accepted transitions are exactly:
+\begin{enumerate}
+\item In \(\mathsf{KInit}(n)\), accept an input-labelled message from
+      authenticated source \(I\), with instruction
+      \(\mathsf{dummyCaller}(x_I)\) and payload \(\mathsf{start}\).  Move to
+      \(\mathsf{KWaitFirst}(n)\) and send the simulator a backdoor-labelled,
+      plain \(\mathsf{schedule}_1\) message.
+\item In \(\mathsf{KWaitFirst}(n)\), accept a backdoor-labelled, plain
+      \(\mathsf{release}_1\) message from authenticated source \(\Adv\).
+      Sample \(c\getsr\mathbb Z_{q_n}\) and set
+      \(K=\mathsf{enc}_n(g_n^c)\).  Move to
+      \(\mathsf{KWaitContinue}(n,K)\) and send to dummy \(R\) a
+      subroutine-output message with instruction
+      \(\mathsf{dummyDestination}(x_R)\) and payload \(\mathsf{key}(K)\).
+\item In \(\mathsf{KWaitContinue}(n,K)\), accept an input-labelled message
+      from authenticated source \(R\), with instruction
+      \(\mathsf{dummyCaller}(x_R)\) and payload \(\mathsf{continue}\).  Move
+      to \(\mathsf{KWaitSecond}(n,K)\) and send the simulator a
+      backdoor-labelled, plain \(\mathsf{schedule}_2\) message.
+\item In \(\mathsf{KWaitSecond}(n,K)\), accept a backdoor-labelled, plain
+      \(\mathsf{release}_2\) message from authenticated source \(\Adv\).
+      Move to \(\mathsf{KDone}(n)\) and send to dummy \(I\) a
+      subroutine-output message with instruction
+      \(\mathsf{dummyDestination}(x_I)\) and payload \(\mathsf{key}(K)\).
+\end{enumerate}
+Every other input and \(\mathsf{none}\) leaves the state unchanged and emits no
+envelope.  The functionality halt flag is always false and its local output is
+unit.  The two parties receive the same uniformly sampled encoded group
+element, subject to the two independent release decisions.
+\end{definition}
+
+\begin{definition}[Generated ideal KE protocol]
+\label{def:dhke-ideal-protocol}
+\uses{def:dhke-ideal-functionality,def:uc-dummy-party,def:uc-ideal-protocol,rem:uc-ideal-simulator-access}
+\notready
+Let
+\[
+  \Phi_{\mathsf{KE}}^{\mathfrak G}
+  :=\IdealProtocol(\mathcal F_{\mathsf{KE}}^{\mathfrak G}).
+\]
+Its main machines are the automatically generated dummies with identities
+\(I\) and \(R\), and its unique internal machine is
+\(F_{\mathsf{KE}}\).  Environment messages follow
+\[
+  x_I\leftrightarrow I\leftrightarrow F_{\mathsf{KE}},
+  \qquad
+  x_R\leftrightarrow R\leftrightarrow F_{\mathsf{KE}}.
+\]
+The simulator does not control either dummy.  All effective scheduling and
+leakage interaction occurs through the functionality's program.
+\end{definition}
+
+\begin{definition}[Real and ideal adversarial observations]
+\label{def:dhke-observation-boundary}
+\uses{def:dhke-forwarder-programs,def:dhke-ideal-functionality,def:dhke-ideal-protocol}
+\notready
+The real and ideal adversarial interfaces deliberately expose different raw
+messages:
+\[
+\begin{array}{c|c}
+  \text{real adversary} & \text{ideal simulator}\\ \hline
+  \mathsf{observe}_1(X) & \mathsf{schedule}_1\\
+  \mathsf{observe}_2(Y) & \mathsf{schedule}_2.
+\end{array}
+\]
+The real observations contain the complete public shares \(X\) and \(Y\).
+The ideal scheduling messages contain neither a share nor the ideal key
+\(K\).  Consequently, a later simulator construction must sample its own fake
+shares and use them when invoking the wrapped real-world adversary.  The ideal
+functionality must never provide those fake shares.
+\end{definition}
+
+\begin{definition}[Computational UC-realization target]
+\label{def:dhke-uc-target}
+\uses{def:dhke-real-protocol,def:dhke-ideal-functionality,def:dhke-ideal-protocol,def:uc-realization}
+\notready
+The security target for the case study is
+\[
+  \mathsf{DHKEGoal}(\mathfrak G)
+  :\Longleftrightarrow
+  \mathsf{UCRealizesAt}
+  \bigl(
+    \mathsf{computational},
+    \varnothing,
+    \Pi_{\mathsf{DH}}^{\mathfrak G},
+    \mathcal F_{\mathsf{KE}}^{\mathfrak G}
+  \bigr).
+\]
+Thus the fixed corruption pattern is empty.  Plain backdoor scheduling remains
+available in both worlds and is not corruption.
+\end{definition}
+
+\subsection{Decisional Diffie--Hellman Assumption}
+
+\begin{definition}[DDH sample space]
+\label{def:dhke-ddh-sample}
+\uses{def:dhke-group-family}
+\notready
+A DDH sample is a triple in the fixed type
+\[
+  \mathcal X_{\mathsf{DDH}}:=\mathcal W^3.
+\]
+Using a fixed wire type makes the sample space independent of the security
+parameter, as required by the UC Core ensemble and distinguisher interfaces.
+Every sample generated below consists of canonical encodings for
+\(\mathfrak G(n)\).
+\end{definition}
+
+\begin{definition}[Real DDH ensemble]
+\label{def:dhke-ddh-real}
+\uses{def:dhke-ddh-sample,def:uc-ensemble}
+\notready
+The real DDH ensemble
+\(\mathsf{DDHReal}_{\mathfrak G}:\Nat\to
+\PMF(\mathcal X_{\mathsf{DDH}})\) is
+\[
+\begin{aligned}
+  \mathsf{DDHReal}_{\mathfrak G}(n):
+  \quad&a\getsr\mathbb Z_{q_n};\quad
+        b\getsr\mathbb Z_{q_n};\\
+  &\mathsf{return}\bigl(
+      \mathsf{enc}_n(g_n^a),
+      \mathsf{enc}_n(g_n^b),
+      \mathsf{enc}_n(g_n^{ab})
+    \bigr).
+\end{aligned}
+\]
+The two exponents are sampled independently.
+\end{definition}
+
+\begin{definition}[Random DDH ensemble]
+\label{def:dhke-ddh-random}
+\uses{def:dhke-ddh-sample,def:uc-ensemble}
+\notready
+The random DDH ensemble
+\(\mathsf{DDHRand}_{\mathfrak G}:\Nat\to
+\PMF(\mathcal X_{\mathsf{DDH}})\) is
+\[
+\begin{aligned}
+  \mathsf{DDHRand}_{\mathfrak G}(n):
+  \quad&a\getsr\mathbb Z_{q_n};\quad
+        b\getsr\mathbb Z_{q_n};\quad
+        c\getsr\mathbb Z_{q_n};\\
+  &\mathsf{return}\bigl(
+      \mathsf{enc}_n(g_n^a),
+      \mathsf{enc}_n(g_n^b),
+      \mathsf{enc}_n(g_n^c)
+    \bigr).
+\end{aligned}
+\]
+The three exponents are sampled independently.
+\end{definition}
+
+\begin{definition}[DDH assumption]
+\label{ass:dhke-ddh}
+\uses{def:dhke-ddh-real,def:dhke-ddh-random,def:uc-ppt,def:uc-negligible,def:uc-distinguisher,def:uc-computational-indist}
+\notready
+The DDH assumption for \(\mathfrak G\) is
+\[
+  \mathsf{DDH}(\mathfrak G)
+  :\Longleftrightarrow
+  \mathsf{ComputationalIndist}
+  \bigl(
+    \mathsf{DDHReal}_{\mathfrak G},
+    \mathsf{DDHRand}_{\mathfrak G}
+  \bigr).
+\]
+Equivalently, for every distinguisher
+\(D:\mathsf{Distinguisher}(\mathcal X_{\mathsf{DDH}})\),
+\[
+\begin{aligned}
+  \PPTM(D)\Longrightarrow
+  \exists\varepsilon:\Nat\to\mathbb R,\quad
+  &\Negl(\varepsilon)\land{}\\
+  &\forall n,\quad
+  \mathsf{Adv}_D\bigl(
+    \mathsf{DDHReal}_{\mathfrak G},
+    \mathsf{DDHRand}_{\mathfrak G},n
+  \bigr)
+  \le\varepsilon(n).
+\end{aligned}
+\]
+The distinguisher receives all three encoded group elements and the security
+parameter.  The assumption does not hide either of the first two public shares.
+\end{definition}
+
+\begin{theorem}[DHKE realizes ideal key exchange under DDH]
+\label{thm:dhke-uc-realization}
+\uses{def:dhke-uc-target,ass:dhke-ddh,def:uc-controller-ppt,rem:uc-computational-boundary}
+\notready
+For every deterministic public group family \(\mathfrak G\) satisfying the
+efficiency and well-formedness conditions of
+Definition~\ref{def:dhke-group-family},
+\[
+  \mathsf{DDH}(\mathfrak G)
+  \Longrightarrow
+  \mathsf{DHKEGoal}(\mathfrak G).
+\]
+Expanded, the conclusion is
+\[
+  \mathsf{UCRealizesAt}
+  \bigl(
+    \mathsf{computational},
+    \varnothing,
+    \Pi_{\mathsf{DH}}^{\mathfrak G},
+    \mathcal F_{\mathsf{KE}}^{\mathfrak G}
+  \bigr).
+\]
+This theorem is only the formal target.  Its simulator, DDH reduction, hybrid
+games, trace-equivalence lemmas, and negligible bound are intentionally left
+for the subsequent proof development.
+\end{theorem}
